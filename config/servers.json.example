@@ -1,0 +1,23 @@
+{
+  "servers": [
+    {
+      "key": "europe31x3",
+      "name": "Europe 31 (x3)",
+      "base_url": "https://ts31.x3.europe.travian.com",
+      "enabled": true,
+      "tags": ["europe", "x3"]
+    }
+  ],
+  "settings": {
+    "schedule": "daily@00:01",
+    "request_timeout": 60,
+    "max_retries": 3,
+    "user_agent": "t.statistics.stas.bot/0.1 (+https://github.com/)",
+    "keep_raw_snapshots": true,
+    "inactive_search_radius": 30,
+    "inactive_min_snapshots": 2,
+    "inactive_exclude_npc": true,
+    "dashboard_follow_players": [],
+    "dashboard_follow_alliances": []
+  }
+}

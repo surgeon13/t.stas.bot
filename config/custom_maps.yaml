@@ -1,0 +1,46 @@
+# Custom map presets for the Streamlit dashboard ("Custom maps" tab).
+
+# Edit here or create/delete presets in the UI.
+
+#
+
+# view_radius: half-side of the square viewport in map tiles (villages outside
+
+#   still exist but are off-screen). Use 0 for full world.
+
+# highlight_mode: everyone | tribe | multi
+
+#   Legacy YAML may still use player | alliance — they load and remap to lists.
+
+# For multi-color maps, use highlight_mode: multi with alliance_ids / player_ids arrays. Example:
+
+#
+
+# presets:
+
+#   - id: my-ops
+
+#     name: "Opponents + allies"
+
+#     center_x: 10
+
+#     center_y: -20
+
+#     view_radius: 25
+
+#     highlight_mode: multi
+
+#     player_id: 0
+
+#     alliance_id: 0
+
+#     tribe_name: ""
+
+#     alliance_ids: [101, 205]
+
+#     player_ids: [12345]
+
+
+
+presets: []
+

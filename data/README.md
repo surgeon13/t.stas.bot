@@ -1,0 +1,1 @@
+Runtime data for this installation. The app creates **`snapshots/<server_key>/`** here when **`keep_raw_snapshots`** is enabled in `config/servers.json`; those files are gitignored. The SQLite database **`statistics.db`** lives in the project root (also gitignored).

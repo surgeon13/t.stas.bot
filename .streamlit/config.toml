@@ -1,0 +1,18 @@
+# Streamlit chrome + color tokens — modern / minimal baseline.
+# Rerun `streamlit run dashboard.py` after editing.
+
+[browser]
+gatherUsageStats = false
+
+[client]
+toolbarMode = "minimal"
+
+[theme]
+base = "light"
+primaryColor = "#475569"
+backgroundColor = "#f4f6f8"
+secondaryBackgroundColor = "#eceff2"
+textColor = "#111827"
+font = "sans serif"
+# Global UI scale (pixels). Streamlit derives rem-based sizes from this — try 14–18.
+baseFontSize = 15

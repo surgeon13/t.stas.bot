@@ -1,0 +1,8 @@
+dashboard:
+  map_palette: parchment
+  chart_size: spacious
+  chart_colors: cool
+  chart_renderer: altair
+  overview_bar_kind: vertical
+  app_theme: slate_warm
+  appearance: dark
