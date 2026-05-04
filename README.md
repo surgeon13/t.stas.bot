@@ -15,7 +15,7 @@ When **publishing to Git**:
 - **`config/servers.json`** is **gitignored** — copy **`config/servers.json.example`** to **`config/servers.json`** after clone (never commit worlds you care about).
 - **`statistics.db`** and **`data/snapshots/`** stay local ([`.gitignore`](.gitignore)).
 
-See **[GitHub (private repo)](#github-private-repo)** below.
+See **[GitHub](#github)** below.
 
 ## How it works
 
@@ -280,22 +280,27 @@ Start in:  C:\Users\path\to\t.statistics.stas.bot
 Trigger:   At log on (or Daily if you restart the PC daily)
 ```
 
-## GitHub (private repo)
+## GitHub
+
+Canonical repo (maintainer: [surgeon13](https://github.com/surgeon13/)):  
+**[github.com/surgeon13/t.stas.bot](https://github.com/surgeon13/t.stas.bot)** — use **Private** if you treat alliance stats as sensitive.
+
+**Create the GitHub repo once:** open [github.com/new](https://github.com/new), name **`t.stas.bot`**, owner **surgeon13**, choose **Private**, and do **not** add README / .gitignore / license (this tree already has them).
+
+**Push from this folder** (`origin` may already be set):
 
 ```powershell
-cd t.statistics.stas.bot
-git init
-git add -A
-git status   # should not list config/servers.json, *.db, or data/snapshots/
-git commit -m "Initial import: Travian map.sql statistics collector"
-```
-
-Create a **Private** repo on GitHub (no auto-generated README if you push this tree). Then:
-
-```powershell
-git remote add origin https://github.com/<you>/<repo>.git
+git remote add origin https://github.com/surgeon13/t.stas.bot.git   # skip if remote origin exists
 git branch -M main
 git push -u origin main
 ```
 
-Collaborators clone, then **`copy`** / **`cp`** **`config/servers.json.example`** → **`config/servers.json`** before the first **`fetch`**.
+**Clone elsewhere:**
+
+```powershell
+git clone https://github.com/surgeon13/t.stas.bot.git
+cd t.stas.bot
+copy config\servers.json.example config\servers.json
+```
+
+Then edit **`config\servers.json`** or run **`python main.py add-server …`** before **`fetch`**.
