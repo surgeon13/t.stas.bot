@@ -1,5 +1,7 @@
 # t.statistics.stas.bot
 
+**Version 1.1.0**
+
 A small app that downloads `map.sql` from one or more Travian servers, parses it,
 and stores each snapshot in SQLite so you can build a persistent, time-aware view
 of the world: player rosters, alliance composition, population movement,
@@ -16,6 +18,19 @@ When **publishing to Git**:
 - **`statistics.db`** and **`data/snapshots/`** stay local ([`.gitignore`](.gitignore)).
 
 See **[GitHub](#github)** below.
+
+## Release / export
+
+This release is prepared as version **1.1.0**.
+
+To create a clean handoff archive without personal data, run:
+
+```powershell
+scripts\export_release.bat
+```
+
+The archive includes source, docs, example config files, and scripts, but excludes
+user-only data such as `statistics.db`, `data/snapshots/`, and `.venv/`.
 
 ## How it works
 
@@ -64,6 +79,48 @@ copy config\servers.json.example config\servers.json
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
+
+On Windows, you can also use the helper:
+
+```powershell
+scripts\install_requirements.bat
+```
+
+## Quick start
+
+1. Ensure `config/servers.json` exists by copying the example and editing the server entries:
+
+```powershell
+copy config\servers.json.example config\servers.json
+```
+
+2. Run a one-time fetch to download the latest map snapshot:
+
+```powershell
+python main.py fetch
+```
+
+3. Open the dashboard in your browser:
+
+```powershell
+streamlit run dashboard.py
+```
+
+4. Run the scheduler loop so fetches repeat automatically (no keyboard input; reads `settings.schedule`):
+
+```powershell
+python main.py run --no-schedule-stdin
+# or simply (same unattended default):
+python main.py
+```
+
+Schedule in `config/servers.json`: `daily@00:01` (default), `every@6h`, or `every@30m`. On Windows, **`scripts\run_daily_fetch.bat`** starts the same loop.
+
+If you want to install the app as a local package after export:
+
+```powershell
+python -m pip install -e .
 ```
 
 The CLI uses [`rich`](https://github.com/Textualize/rich) to render output as

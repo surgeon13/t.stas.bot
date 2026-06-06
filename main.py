@@ -6,7 +6,8 @@ Examples:
     python main.py fetch                       # fetch all enabled servers once
     python main.py fetch --server europe31x3   # fetch a specific server
     python main.py analyze --server europe31x3 # show latest stats + delta
-    python main.py run                         # daily loop + stdin: fetch | every N m | …
+    python main.py                               # same as: run --no-schedule-stdin (unattended loop)
+    python main.py run                         # scheduled loop + optional stdin commands
     python main.py menu              # interactive: [F]etch [R]efresh [S]ettings [Q]uit
     python main.py inactives --server europe31x3 --x 10 --y -20
     python main.py add-server --key myspeed --name "My x3" --base-url https://ts.example.com --tag europe --tag x3
@@ -21,9 +22,20 @@ import logging
 import sys
 from pathlib import Path
 
-from src import analyzer, fetch_ingest, scheduler, storage, view
-from src.config import AppConfig, ServerConfig, append_server, load_config
-from src.terminal_menu import run_terminal_menu
+try:
+    from src import analyzer, fetch_ingest, scheduler, storage, view
+    from src.config import AppConfig, ServerConfig, append_server, load_config
+    from src.terminal_menu import run_terminal_menu
+except ModuleNotFoundError as e:
+    missing = getattr(e, "name", None)
+    print(
+        "error: missing Python dependency. Install requirements with:\n"
+        "  python -m pip install -r requirements.txt",
+        file=sys.stderr,
+    )
+    if missing:
+        print(f"missing module: {missing}", file=sys.stderr)
+    raise SystemExit(1) from e
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -393,11 +405,13 @@ def cmd_events(args: argparse.Namespace) -> int:
 
 
 def cmd_run(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
+    cfg_path = Path(args.config)
     db_path = Path(args.db)
+    cfg = load_config(cfg_path)
 
     def job() -> None:
-        fetch_ingest.fetch_all_enabled_servers(cfg, db_path)
+        live = load_config(cfg_path)
+        fetch_ingest.fetch_all_enabled_servers(live, db_path)
 
     scheduler.run_loop(
         cfg.settings.schedule,
@@ -420,7 +434,8 @@ def cmd_inactives(args: argparse.Namespace) -> int:
     server = _select_one_server(cfg, args.server)
     db_path = Path(args.db)
     app_settings = cfg.settings
-    radius = args.radius if args.radius is not None else app_settings.inactive_search_radius
+    radius_max = args.radius if args.radius is not None else app_settings.inactive_search_radius
+    radius_min = int(getattr(args, "radius_min", 0) or 0)
     min_snaps = (
         args.min_snapshots
         if args.min_snapshots is not None
@@ -442,7 +457,8 @@ def cmd_inactives(args: argparse.Namespace) -> int:
             server.key,
             args.x,
             args.y,
-            radius=radius,
+            radius_min=radius_min,
+            radius_max=radius_max,
             min_snapshots=min_snaps,
             exclude_npc=exclude_npc,
             limit=args.limit,
@@ -455,7 +471,8 @@ def cmd_inactives(args: argparse.Namespace) -> int:
         server_key=server.key,
         center_x=args.x,
         center_y=args.y,
-        radius=radius,
+        radius_min=radius_min,
+        radius_max=radius_max,
         min_snapshots=min_snaps,
     )
     return 0
@@ -548,7 +565,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--radius",
         type=int,
         default=None,
-        help="Euclidean tile radius (default: settings.inactive_search_radius)",
+        help="maximum Euclidean tile radius (default: settings.inactive_search_radius)",
+    )
+    sp.add_argument(
+        "--radius-min",
+        type=int,
+        default=0,
+        dest="radius_min",
+        help="minimum Euclidean tile radius (0 = include center tile)",
     )
     sp.add_argument(
         "--min-snapshots",
@@ -573,7 +597,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument(
         "--player-pop-max",
         type=int,
-        default=500,
+        default=0,
         metavar="N",
         help="max total population of owning player in latest snapshot (0 = no filter)",
     )
@@ -668,8 +692,54 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+_SUBCOMMANDS = frozenset(
+    {
+        "menu",
+        "list-servers",
+        "add-server",
+        "fetch",
+        "analyze",
+        "snapshots",
+        "inactives",
+        "players",
+        "player",
+        "alliances",
+        "alliance",
+        "villages",
+        "village",
+        "events",
+        "run",
+    }
+)
+
+
+def _argv_with_default_run(argv: list[str]) -> list[str]:
+    """Unattended default: ``python main.py`` → ``run --no-schedule-stdin``."""
+    if not argv:
+        return ["run", "--no-schedule-stdin"]
+    if argv[0] in ("-h", "--help"):
+        return argv
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a in ("-h", "--help"):
+            return argv
+        if a.startswith("-"):
+            if a in ("--config", "--db") and i + 1 < len(argv):
+                i += 2
+                continue
+            i += 1
+            continue
+        if a in _SUBCOMMANDS:
+            return argv
+        return argv
+    return [*argv, "run", "--no-schedule-stdin"]
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    if argv is None:
+        argv = sys.argv[1:]
+    args = build_parser().parse_args(_argv_with_default_run(argv))
     _setup_logging(args.verbose)
     return args.func(args)
 

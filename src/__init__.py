@@ -2,7 +2,7 @@
 
 import sys as _sys
 
-__version__ = "0.1.0"
+__version__ = "1.1.0"
 
 
 def _force_utf8_stdio() -> None:

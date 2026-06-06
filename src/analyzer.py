@@ -1868,31 +1868,35 @@ def inactive_villages_near(
     center_x: int,
     center_y: int,
     *,
-    radius: int,
+    radius_min: int = 0,
+    radius_max: int = 30,
     min_snapshots: int = 2,
     exclude_npc: bool = True,
     limit: int | None = None,
     player_total_pop_min: int = 0,
-    player_total_pop_max: int = 500,
+    player_total_pop_max: int = 0,
 ) -> list[InactiveNearRow]:
-    """Villages that (1) exist in the latest snapshot, (2) lie within ``radius``
-    Euclidean tiles of ``(center_x, center_y)``, and (3) have **constant**
-    population in every stored snapshot where they appear (needs at least
-    ``min_snapshots`` observations).
+    """Villages that (1) exist in the latest snapshot, (2) lie within the
+    Euclidean tile ring ``radius_min`` … ``radius_max`` of ``(center_x, center_y)``
+    (inclusive), and (3) have **constant** population in every stored snapshot
+    where they appear (needs at least ``min_snapshots`` observations).
 
     Optional: ``player_total_pop_min`` / ``player_total_pop_max`` (values ``<= 0`` disable that
     side of the filter) restrict by the owning player's **total** population summed over all
-    their villages in the **latest** snapshot. Defaults: min ``0`` (no floor), max ``500``.
+    their villages in the **latest** snapshot.
 
     This is a practical proxy for “inactive” accounts when you only have
     map.sql time series — not login activity.
     """
-    if radius <= 0:
+    radius_min = max(0, int(radius_min))
+    radius_max = int(radius_max)
+    if radius_max <= 0 or radius_min > radius_max:
         return []
     if min_snapshots < 2:
         min_snapshots = 2
 
-    rsq = radius * radius
+    min_rsq = radius_min * radius_min
+    max_rsq = radius_max * radius_max
     npc_sql = ""
     if exclude_npc:
         npc_sql = "AND v.player_id != 0 AND v.tribe_id NOT IN (4, 5)"
@@ -1929,7 +1933,8 @@ def inactive_villages_near(
         INNER JOIN village_pop_stats ps ON ps.village_id = v.village_id
         INNER JOIN player_totals pt ON pt.pid = v.player_id
         WHERE v.snapshot_id = l.sid
-          AND (v.x - :cx2) * (v.x - :cx2) + (v.y - :cy2) * (v.y - :cy2) <= :rsq
+          AND (v.x - :cx2) * (v.x - :cx2) + (v.y - :cy2) * (v.y - :cy2) >= :min_rsq
+          AND (v.x - :cx2) * (v.x - :cx2) + (v.y - :cy2) * (v.y - :cy2) <= :max_rsq
           {npc_sql}
           AND (:ppp_min <= 0 OR pt.ptot >= :ppp_min)
           AND (:ppp_max <= 0 OR pt.ptot <= :ppp_max)
@@ -1942,7 +1947,8 @@ def inactive_villages_near(
         "cy": center_y,
         "cx2": center_x,
         "cy2": center_y,
-        "rsq": rsq,
+        "min_rsq": min_rsq,
+        "max_rsq": max_rsq,
         "ppp_min": int(player_total_pop_min),
         "ppp_max": int(player_total_pop_max),
     }

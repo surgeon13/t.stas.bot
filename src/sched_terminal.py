@@ -14,6 +14,16 @@ _STYLE_TIME = "bold bright_magenta"
 _STYLE_FRESH_OK = "bold bright_green"
 
 
+def print_interval_schedule_banner(*, spec: str, n: int, unit: str) -> None:
+    line = Text()
+    line.append("● ", style=_STYLE_TIME)
+    line.append("Scheduled map fetch  ", style="dim")
+    line.append(spec, style=_STYLE_TIME)
+    line.append(f"  → fires every {n} ", style="dim")
+    line.append(unit, style=_STYLE_TIME)
+    _console.print(line)
+
+
 def print_daily_schedule_banner(*, spec: str, hh_mm: str) -> None:
     line = Text()
     line.append("● ", style=_STYLE_TIME)

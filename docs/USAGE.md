@@ -47,7 +47,7 @@ pip install -r requirements.txt
 
 | File | Purpose |
 |------|---------|
-| **`config/servers.json`** | Single app config for **Travian worlds**: top-level **`servers`** (array) and **`settings`** (object — schedule `daily@HH:MM`, HTTP, inactive-search defaults, optional **`dashboard_follow_players`** / **`dashboard_follow_alliances`** pins). Omit **`settings`** keys you want left at defaults. |
+| **`config/servers.json`** | Single app config for **Travian worlds**: top-level **`servers`** (array) and **`settings`** (object — schedule `daily@HH:MM`, `every@6h`, or `every@30m`; HTTP; inactive-search defaults; optional dashboard pins). Omit **`settings`** keys you want left at defaults. |
 | **`config/servers.json.example`** | Full template mirroring shipped defaults. |
 | **`config/ui.yaml`** | Dashboard preferences: map palette, chart density, Plotly/chart colors, Altair vs other chart paths, overview bar style, app theme (`app_theme`), light/dark **`appearance`**. The interactive **`menu`** command reads the same **`--ui`** path. |
 | **`config/custom_maps.yaml`** | Named map configs for the **Custom** tab (regions, overlays). |
@@ -109,7 +109,7 @@ python main.py fetch --help
 | **`village`** | One village history; **`--id`** or **`--name`**. |
 | **`events`** | Diff between snapshots (default: latest pair); **`--kind`**, **`--from-id`**, **`--to-id`**, **`--limit`**. |
 | **`inactives`** | Villages near **`--x`** / **`--y`** with flat population over history; **`--radius`**, **`--min-snapshots`**, **`--include-npc`**, **`--limit`**, **`--player-pop-min`**, **`--player-pop-max`**. Requires enough stored snapshots (`inactive_min_snapshots` in settings). |
-| **`run`** | Foreground scheduler loop (**`daily@HH:MM`** from settings, machine-local time). Ad hoc stdin commands unless **`--no-schedule-stdin`**. |
+| **`run`** | Foreground scheduler loop (`settings.schedule`: **`daily@HH:MM`**, **`every@Nh`**, **`every@Nm`**). Ad hoc stdin commands unless **`--no-schedule-stdin`**. **`python main.py`** with no subcommand defaults to **`run --no-schedule-stdin`**. |
 
 Examples:
 
@@ -163,10 +163,11 @@ Windows examples are in **`README.md`**.
 When packaging or sending the repo to someone else:
 
 1. Include **source**, **`LICENSE`**, **`config/servers.json.example`**, **`config/ui.yaml`** / **`config/custom_maps.yaml`** if customised (**not** **`config/servers.json`** — that file is gitignored and must stay personal).
-2. Include **`requirements.txt`** and **`README.md`** plus this **`docs/USAGE.md`**.
+2. Include **`requirements.txt`**, **`pyproject.toml`**, and **`README.md`** plus this **`docs/USAGE.md`**.
 3. **Exclude** from zips/shares unless needed: **`statistics.db`**, **`data/snapshots/`**, **`.venv/`** (recipient rebuilds venv).
 4. Document **`T_STATS_DB`** / **`T_STATS_CONFIG`** if their paths differ from defaults.
 5. Run **`pip install -r requirements.txt`** and **`python main.py fetch`** once to validate.
+6. For a clean release archive, run **`scripts/export_release.bat`** to package the repository without personal data.
 
 Quick sanity check for syntax (optional):
 

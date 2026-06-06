@@ -142,12 +142,18 @@ def render_inactives_near(
     server_key: str,
     center_x: int,
     center_y: int,
-    radius: int,
+    radius_min: int,
+    radius_max: int,
     min_snapshots: int,
 ) -> None:
+    ring = (
+        f"radius {radius_max} tiles"
+        if radius_min <= 0
+        else f"radius {radius_min}–{radius_max} tiles"
+    )
     title = (
         f"Inactive candidates near ({center_x:+d}|{center_y:+d}) "
-        f"— radius {radius} tiles · {server_name} ({server_key})"
+        f"— {ring} · {server_name} ({server_key})"
     )
     subtitle = (
         f"Flat population in all observations (≥{min_snapshots} snapshots). "

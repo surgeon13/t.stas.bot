@@ -54,7 +54,7 @@ class ServerConfig:
 
 @dataclass(frozen=True)
 class Settings:
-    schedule: str = "daily@00:01"
+    schedule: str = "daily@00:01"  # daily@HH:MM | every@6h | every@30m
     request_timeout: int = 60
     max_retries: int = 3
     user_agent: str = "t.statistics.stas.bot/0.1"
@@ -98,8 +98,12 @@ def _parse_server(raw: dict[str, Any]) -> ServerConfig:
 def _parse_settings(raw: dict[str, Any] | None) -> Settings:
     raw = raw or {}
     defaults = Settings()
+    schedule = str(raw.get("schedule", defaults.schedule))
+    from .scheduler import parse_schedule_spec
+
+    parse_schedule_spec(schedule)
     return Settings(
-        schedule=str(raw.get("schedule", defaults.schedule)),
+        schedule=schedule,
         request_timeout=int(raw.get("request_timeout", defaults.request_timeout)),
         max_retries=int(raw.get("max_retries", defaults.max_retries)),
         user_agent=str(raw.get("user_agent", defaults.user_agent)),

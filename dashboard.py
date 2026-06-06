@@ -185,6 +185,20 @@ def server_history_summary(server_key: str) -> pd.DataFrame:
     return df
 
 
+_RANK_DELTA_COLS = frozenset({"pop_delta", "villages_delta", "members_delta"})
+
+
+def _coerce_rank_delta_dtypes(df: pd.DataFrame) -> pd.DataFrame:
+    """Ensure delta columns are numeric (pandas may infer ``object`` from ``None``)."""
+    if df.empty:
+        return df
+    out = df.copy()
+    for col in _RANK_DELTA_COLS:
+        if col in out.columns:
+            out[col] = pd.to_numeric(out[col], errors="coerce")
+    return out
+
+
 @st.cache_data(ttl=30)
 def players_dataframe(server_key: str) -> pd.DataFrame:
     """All players in the latest snapshot, with delta vs. previous snapshot."""
@@ -194,7 +208,7 @@ def players_dataframe(server_key: str) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame([r.__dict__ for r in rows])
     df = df.rename(columns={"rank": "#"})
-    return df
+    return _coerce_rank_delta_dtypes(df)
 
 
 @st.cache_data(ttl=30)
@@ -205,7 +219,7 @@ def alliances_dataframe(server_key: str) -> pd.DataFrame:
         return pd.DataFrame()
     df = pd.DataFrame([r.__dict__ for r in rows])
     df = df.rename(columns={"rank": "#"})
-    return df
+    return _coerce_rank_delta_dtypes(df)
 
 
 @st.cache_data(ttl=30)
@@ -217,7 +231,7 @@ def villages_dataframe(server_key: str, *, player_id: int | None = None) -> pd.D
     df = pd.DataFrame([r.__dict__ for r in rows])
     df = df.rename(columns={"rank": "#"})
     df["coords"] = df.apply(lambda r: f"({int(r.x):+d}|{int(r.y):+d})", axis=1)
-    return df
+    return _coerce_rank_delta_dtypes(df)
 
 
 @st.cache_data(ttl=30)
@@ -232,7 +246,7 @@ def villages_top_by_growth(server_key: str, *, limit: int = 20) -> pd.DataFrame:
     df["coords"] = df.apply(
         lambda r: f"({int(r.x):+d}|{int(r.y):+d})", axis=1
     )
-    return df
+    return _coerce_rank_delta_dtypes(df)
 
 
 @st.cache_data(ttl=30)
@@ -245,7 +259,7 @@ def villages_top_by_loss(server_key: str, *, limit: int = 20) -> pd.DataFrame:
     df["coords"] = df.apply(
         lambda r: f"({int(r.x):+d}|{int(r.y):+d})", axis=1
     )
-    return df
+    return _coerce_rank_delta_dtypes(df)
 
 
 @st.cache_data(ttl=60)
@@ -452,11 +466,7 @@ def _render_special_tribe_village_search(
                 mime="text/csv",
                 key=f"{csv_slug}_csv_{server.key}",
             )
-            df_n = df_n.copy()
-            df_n["coords"] = (
-                "(" + df_n["x"].map(lambda v: f"{int(v):+d}") + "|"
-                + df_n["y"].map(lambda v: f"{int(v):+d}") + ")"
-            )
+            df_n = _apply_coords_game_links(df_n.copy(), server.base_url)
             n_show = df_n.rename(columns={"distance_tiles": "dist"})
             n_show["village"] = _village_name_link_series(
                 n_show["village_name"], n_show["village_id"], server.key
@@ -896,6 +906,10 @@ def _dash_line_chart(data: pd.DataFrame, *, height: int) -> None:
 
 PAGE_SIZE_OPTIONS: tuple[int, ...] = (10, 25, 50, 100, 200)
 
+INACTIVE_PAGE_OPTS: tuple[int, ...] = (10, 25, 50, 100, 250, 500)
+INACTIVE_DEFAULT_PAGE_SIZE = 25
+INACTIVE_PAGING_THRESHOLD = 10
+
 # Top tab leaderboards — show deeper cuts; paging defaults reveal full list on load
 LB_LEADERBOARD_ROWS = 50
 LB_LEADERBOARD_PAGE_OPTS: tuple[int, ...] = (25, 50, 75, 100, 150, 200)
@@ -908,15 +922,24 @@ def _leaderboard_pagination_kwargs() -> dict[str, object]:
     }
 
 
+def _dataframe_height(row_count: int, *, row_px: int = 35, cap_px: int = 700) -> int:
+    return min(cap_px, 38 + max(1, row_count) * row_px)
+
+
 def _paginated_dataframe(
     df: pd.DataFrame,
     *,
     key: str,
     page_size_options: tuple[int, ...] = PAGE_SIZE_OPTIONS,
     default_page_size: int = 50,
+    min_rows_for_paging: int | None = 10,
     **dataframe_kwargs,
 ) -> None:
-    """Paged ``st.dataframe`` with rows-per-page and page number controls."""
+    """Paged ``st.dataframe`` with rows-per-page and page number controls.
+
+    When ``min_rows_for_paging`` is set and the table has at most that many rows,
+    every row is shown and paging controls are hidden.
+    """
     prefix = f"_pg_{key}"
     ps_key = f"{prefix}_ps"
     pg_key = f"{prefix}_page"
@@ -924,6 +947,14 @@ def _paginated_dataframe(
     n = len(df)
     if n == 0:
         st.caption("No rows.")
+        return
+
+    if min_rows_for_paging is not None and n <= min_rows_for_paging:
+        st.caption(f"Showing **{n:,}** row(s).")
+        visible = df
+        kwargs = dict(dataframe_kwargs)
+        kwargs.setdefault("height", _dataframe_height(len(visible)))
+        st.dataframe(visible, **kwargs)
         return
 
     opts = tuple(page_size_options) if page_size_options else PAGE_SIZE_OPTIONS
@@ -968,7 +999,10 @@ def _paginated_dataframe(
     st.caption(
         f"Showing **{start + 1}–{end}** of **{n:,}** rows · page **{page_n}** / **{total_pages}**"
     )
-    st.dataframe(df.iloc[start:end], **dataframe_kwargs)
+    visible = df.iloc[start:end]
+    kwargs = dict(dataframe_kwargs)
+    kwargs.setdefault("height", _dataframe_height(len(visible)))
+    st.dataframe(visible, **kwargs)
 
 
 def _dash_bar_chart(
@@ -1121,31 +1155,78 @@ def _village_name_link_series(
     return pd.Series(out, index=names.index, dtype=object)
 
 
+def travian_tile_href(base_url: str, x: int, y: int) -> str:
+    """Direct Travian Legends map URL for tile (x, y)."""
+    q = urlencode({"x": str(int(x)), "y": str(int(y))})
+    return f"{base_url.rstrip('/')}/position_details.php?{q}"
+
+
+def _game_coord_markdown_link(base_url: str, x: int, y: int) -> str:
+    """Inline HTML link — opens Travian map in a new browser tab."""
+    label = f"({int(x):+d}|{int(y):+d})"
+    url = html.escape(travian_tile_href(base_url, x, y), quote=True)
+    return (
+        f'<a href="{url}" target="_blank" rel="noopener noreferrer">'
+        f"{html.escape(label)}</a>"
+    )
+
+
 def _game_coords_link_series(base_url: str, xs: pd.Series, ys: pd.Series) -> pd.Series:
-    """Opens Travian browser UI at tile (x,y) — Travian Legends position_details."""
+    """LinkColumn values: Travian ``position_details.php`` (opens in a new tab)."""
     out: list[str] = []
-    bu = base_url.rstrip("/")
     for xr, yr in zip(xs.tolist(), ys.tolist()):
         try:
             x_i = int(xr)
             y_i = int(yr)
         except (TypeError, ValueError):
             x_i, y_i = 0, 0
-        q = urlencode({"x": str(x_i), "y": str(y_i)})
         coord_label = f"({x_i:+d}|{y_i:+d})"
         lab = _link_fragment_label(coord_label)
-        out.append(f"{bu}/position_details.php?{q}#{lab}")
+        out.append(f"{travian_tile_href(base_url, x_i, y_i)}#{lab}")
     return pd.Series(out, index=xs.index, dtype=object)
+
+
+def _apply_coords_game_links(
+    df: pd.DataFrame,
+    base_url: str,
+    *,
+    x_col: str = "x",
+    y_col: str = "y",
+    coords_col: str = "coords",
+    drop_xy: bool = True,
+) -> pd.DataFrame:
+    """Replace or add ``coords`` with Travian map links when ``x``/``y`` are present."""
+    if df.empty or x_col not in df.columns or y_col not in df.columns:
+        return df
+    out = df.copy()
+    out[coords_col] = _game_coords_link_series(base_url, out[x_col], out[y_col])
+    if drop_xy:
+        out = out.drop(columns=[x_col, y_col])
+    return out
 
 
 def _link_column_coords_game() -> dict:
     return {
         "coords": st.column_config.LinkColumn(
             "coords",
+            help="Open this tile on the Travian map (new browser tab)",
             display_text=_LINK_LABEL_FRAGMENT_RE,
             width="small",
         ),
     }
+
+
+def _events_village_display_df(df: pd.DataFrame, server: ServerConfig) -> pd.DataFrame:
+    """Events tables: ``x``/``y`` → clickable ``coords`` (Travian map, new tab)."""
+    if df.empty or "x" not in df.columns:
+        return df
+    out = _apply_coords_game_links(df, server.base_url)
+    cols = list(out.columns)
+    if "village_name" in cols and "coords" in cols:
+        cols.remove("coords")
+        cols.insert(cols.index("village_name") + 1, "coords")
+        out = out[cols]
+    return out
 
 
 DETAIL_QUERY_KEYS = frozenset(
@@ -1188,6 +1269,7 @@ def _link_column_lb_player() -> dict:
 
 def _link_column_config_village_player() -> dict:
     return {
+        **_link_column_coords_game(),
         "village": st.column_config.LinkColumn(
             "Village", display_text=_LINK_LABEL_FRAGMENT_RE, width="medium"
         ),
@@ -1206,10 +1288,12 @@ def render_village_detail_block(server: ServerConfig, village_id: int) -> None:
     if vh_df.empty:
         st.warning(f"No data for village id **{village_id}** on this server.")
         return
+    coord_link = _game_coord_markdown_link(server.base_url, vx, vy)
     st.markdown(
-        f"**{vname}** &nbsp;·&nbsp; coords ({vx:+d}|{vy:+d}) &nbsp;·&nbsp; "
+        f"**{vname}** &nbsp;·&nbsp; coords {coord_link} &nbsp;·&nbsp; "
         f"{len(vh_df)} snapshot(s) &nbsp;·&nbsp; "
-        f"distinct owners: {vh_df['player_id'].nunique()}"
+        f"distinct owners: {vh_df['player_id'].nunique()}",
+        unsafe_allow_html=True,
     )
     if len(vh_df) >= 2:
         sz = _dash_chart_sizes()
@@ -2676,13 +2760,14 @@ def _render_world_map_fragment(*, server: ServerConfig, snapshot_id: int) -> Non
             st.caption("Pick a player / alliance / tribe to see their villages here.")
         else:
             h2 = hl[
-                ["village_id", "village_name", "coords", "flag", "tribe_name",
+                ["village_id", "village_name", "x", "y", "flag", "tribe_name",
                  "population", "player_name", "alliance_name"]
             ].rename(
                 columns={
                     "tribe_name": "tribe",
                 }
             ).copy()
+            h2 = _apply_coords_game_links(h2, server.base_url)
             h2["village"] = _village_name_link_series(
                 hl["village_name"], hl["village_id"], server_key
             )
@@ -3853,16 +3938,19 @@ with tab_villages:
         else:
             view_df = view_df.sort_values("population", ascending=False)
 
-        vil = view_df[
-            ["village_id", "coords", "flag_label", "tribe_name",
-             "population", "pop_delta", "is_new", "owner_changed"]
-        ].rename(
+        vil = _apply_coords_game_links(
+            view_df[
+                ["village_id", "x", "y", "flag_label", "tribe_name",
+                 "population", "pop_delta", "is_new", "owner_changed"]
+            ],
+            server.base_url,
+        ).rename(
             columns={
                 "flag_label": "flag",
                 "tribe_name": "tribe",
                 "pop_delta": "Δ pop",
             }
-        ).copy()
+        )
         vil.insert(
             1,
             "village",
@@ -3892,7 +3980,8 @@ with tab_villages:
             column_config=_link_column_config_village_player(),
         )
         st.caption(
-            "**Village**, **player**, and **alliance** names open pinned views in **new tabs** "
+            "**Coords** open the tile on the Travian map; **village**, **player**, and **alliance** "
+            "names open pinned dashboard views — all in **new browser tabs** "
             "(★ / · in **flag** = map.sql capital marker; text = region if present)."
         )
 
@@ -3948,7 +4037,7 @@ with tab_inactives:
     st.subheader(f"Inactive search — {server.name}")
     st.caption(
         "Villages whose **population never changed** across stored snapshots (proxy for inactive "
-        "accounts). Euclidean radius from a center tile. The **map** shows **every** match returned "
+        "accounts). Search a tile ring (**minimum** / **maximum** radius) from a center. The **map** shows **every** match returned "
         "(up to **Max results**); use **CSV** for game list workflows. Defaults: **config/servers.json** "
         "(`inactive_search_radius`, `inactive_min_snapshots`, `inactive_exclude_npc`)."
     )
@@ -3962,16 +4051,7 @@ with tab_inactives:
         c1, c2, c3 = st.columns(3)
         cx = c1.number_input("Center x", value=0, step=1, key="inactive_cx")
         cy = c2.number_input("Center y", value=0, step=1, key="inactive_cy")
-        rad = c3.number_input(
-            "Radius (tiles)",
-            min_value=1,
-            max_value=200,
-            value=int(_s.inactive_search_radius),
-            step=1,
-            key="inactive_radius",
-        )
-        c4, c5 = st.columns(2)
-        min_sn = c4.number_input(
+        min_sn = c3.number_input(
             "Min snapshots / village",
             min_value=2,
             max_value=max(len(snapshots_df), 2),
@@ -3979,7 +4059,26 @@ with tab_inactives:
             step=1,
             key="inactive_min_sn",
         )
-        include_npc = c5.checkbox(
+        r1, r2, r3 = st.columns(3)
+        rad_min = r1.number_input(
+            "Minimum radius (tiles)",
+            min_value=0,
+            max_value=600,
+            value=0,
+            step=1,
+            key="inactive_radius_min",
+            help="Inner edge of the search ring (0 = include the center tile).",
+        )
+        rad_max = r2.number_input(
+            "Maximum radius (tiles)",
+            min_value=1,
+            max_value=600,
+            value=int(_s.inactive_search_radius),
+            step=1,
+            key="inactive_radius_max",
+            help="Outer edge of the search ring (Euclidean distance from center).",
+        )
+        include_npc = r3.checkbox(
             "Include NPC / unowned",
             value=not _s.inactive_exclude_npc,
             key="inactive_include_npc",
@@ -3996,29 +4095,32 @@ with tab_inactives:
         )
         ipp1, ipp2 = st.columns(2)
         inactive_pp_min = ipp1.number_input(
-            "Min **player total population** (latest snapshot)",
+            "Min player population (total, latest snapshot)",
             min_value=0,
             max_value=50_000_000,
             value=0,
             step=100,
             key="inactive_ppmin",
-            help="Sum of population over **all villages** that player owns in the latest snapshot. **0** = no minimum.",
+            help="Sum of population over **all villages** that player owns. **0** = no minimum.",
         )
         inactive_pp_max = ipp2.number_input(
-            "Max player total population",
+            "Max player population (total, latest snapshot)",
             min_value=0,
             max_value=50_000_000,
-            value=500,
+            value=0,
             step=100,
             key="inactive_ppmax",
-            help="**0** = no maximum cap.",
+            help="**0** = no maximum (disabled).",
         )
 
         if st.button("Search", type="primary", key="inactive_search_btn"):
             _ppmn, _ppmx = int(inactive_pp_min), int(inactive_pp_max)
-            if _ppmn > 0 and _ppmx > 0 and _ppmn > _ppmx:
+            _rmin, _rmax = int(rad_min), int(rad_max)
+            if _rmin > _rmax:
+                st.warning("Maximum radius must be ≥ minimum radius.")
+            elif _ppmn > 0 and _ppmx > 0 and _ppmn > _ppmx:
                 st.warning(
-                    "Player population max must be ≥ min when both bounds are set "
+                    "Max player population must be ≥ min when both bounds are set "
                     "(use **0** on either side to disable that bound)."
                 )
             else:
@@ -4028,7 +4130,8 @@ with tab_inactives:
                     server.key,
                     int(cx),
                     int(cy),
-                    radius=int(rad),
+                    radius_min=_rmin,
+                    radius_max=_rmax,
                     min_snapshots=int(min_sn),
                     exclude_npc=not include_npc,
                     limit=int(row_limit),
@@ -4039,7 +4142,8 @@ with tab_inactives:
                     "rows": [asdict(r) for r in found],
                     "cx": int(cx),
                     "cy": int(cy),
-                    "rad": int(rad),
+                    "rad_min": _rmin,
+                    "rad_max": _rmax,
                     "limit_used": int(row_limit),
                     "hit_cap": len(found) >= int(row_limit) and int(row_limit) > 0,
                 }
@@ -4056,7 +4160,7 @@ with tab_inactives:
                     )
                 snap_id_inactive = int(snapshots_df.iloc[0]["id"])
                 idx_inactive = _map_index(server.key, snap_id_inactive)
-                _ir = int(last.get("rad") or 0)
+                _ir = int(last.get("rad_max") or last.get("rad") or 0)
                 _vp_inactive: tuple[int, int, int] | None = None
                 if _ir > 0:
                     _vp_inactive = (int(last["cx"]), int(last["cy"]), _ir)
@@ -4110,16 +4214,15 @@ with tab_inactives:
                     mime="text/csv",
                     key=f"inactive_csv_{server.key}",
                 )
-                df_i["coords"] = (
-                    "(" + df_i["x"].map(lambda v: f"{int(v):+d}") + "|"
-                    + df_i["y"].map(lambda v: f"{int(v):+d}") + ")"
-                )
-                show = df_i[
-                    ["village_id", "village_name", "coords", "distance_tiles",
-                     "population", "player_id", "player_name",
-                     "alliance_id", "alliance_name", "tribe_name",
-                     "snapshots_seen"]
-                ].rename(columns={
+                show = _apply_coords_game_links(
+                    df_i[
+                        ["village_id", "village_name", "x", "y", "distance_tiles",
+                         "population", "player_id", "player_name",
+                         "alliance_id", "alliance_name", "tribe_name",
+                         "snapshots_seen"]
+                    ],
+                    server.base_url,
+                ).rename(columns={
                     "distance_tiles": "dist",
                     "tribe_name": "tribe",
                     "snapshots_seen": "snapshots",
@@ -4150,11 +4253,13 @@ with tab_inactives:
                         "alliance",
                     ]
                 ]
-                st.markdown("##### Table (paged — change “Rows per page” for more farms per screen)")
+                st.markdown("##### Results table")
                 _paginated_dataframe(
                     show,
                     key=f"tbl_inactives_{server.key}",
-                    default_page_size=100,
+                    page_size_options=INACTIVE_PAGE_OPTS,
+                    default_page_size=INACTIVE_DEFAULT_PAGE_SIZE,
+                    min_rows_for_paging=INACTIVE_PAGING_THRESHOLD,
                     width="stretch",
                     hide_index=True,
                     column_config=_link_column_config_village_player(),
@@ -4252,10 +4357,11 @@ with tab_events:
             ])
             st.caption(f"{len(df)} new village(s).")
             _paginated_dataframe(
-                df,
+                _events_village_display_df(df, server),
                 key=f"events_new_{server.key}_{from_id}_{to_id}_{limit}",
                 width="stretch",
                 hide_index=True,
+                column_config=_link_column_coords_game(),
             )
 
         with sub[1]:
@@ -4272,10 +4378,11 @@ with tab_events:
             ])
             st.caption(f"{len(df)} removed village(s).")
             _paginated_dataframe(
-                df,
+                _events_village_display_df(df, server),
                 key=f"events_removed_{server.key}_{from_id}_{to_id}_{limit}",
                 width="stretch",
                 hide_index=True,
+                column_config=_link_column_coords_game(),
             )
 
         with sub[2]:
@@ -4294,10 +4401,11 @@ with tab_events:
             ])
             st.caption(f"{len(df)} chiefed village(s).")
             _paginated_dataframe(
-                df,
+                _events_village_display_df(df, server),
                 key=f"events_chiefed_{server.key}_{from_id}_{to_id}_{limit}",
                 width="stretch",
                 hide_index=True,
+                column_config=_link_column_coords_game(),
             )
 
         with sub[3]:
@@ -4313,10 +4421,11 @@ with tab_events:
             ])
             st.caption(f"Top {len(df)} village population gainer(s).")
             _paginated_dataframe(
-                df,
+                _events_village_display_df(df, server),
                 key=f"events_grew_{server.key}_{from_id}_{to_id}_{limit}",
                 width="stretch",
                 hide_index=True,
+                column_config=_link_column_coords_game(),
             )
 
         with sub[4]:
@@ -4332,10 +4441,11 @@ with tab_events:
             ])
             st.caption(f"Top {len(df)} village population loser(s).")
             _paginated_dataframe(
-                df,
+                _events_village_display_df(df, server),
                 key=f"events_shrunk_{server.key}_{from_id}_{to_id}_{limit}",
                 width="stretch",
                 hide_index=True,
+                column_config=_link_column_coords_game(),
             )
 
         with sub[5]:

@@ -23,6 +23,7 @@ TAG_CONFIG_DAILY: Final = "config_daily"
 _FETCH_LOCK = threading.Lock()
 
 _DAILY_RE = re.compile(r"^daily@(\d{1,2}):(\d{2})$", re.IGNORECASE)
+_EVERY_AT_RE = re.compile(r"^every@(\d+)([hm])$", re.IGNORECASE)
 _RE_EVERY_INTERVAL = re.compile(
     r"^every\s*(\d+)\s*(minute|minutes|mins|min|m|hours|hour|hrs|hr|h)\s*$",
     re.IGNORECASE,
@@ -30,17 +31,45 @@ _RE_EVERY_INTERVAL = re.compile(
 _RE_STDIN_DAILY = re.compile(r"^daily\s+(?:at\s+)?(\d{1,2}):(\d{2})\s*$", re.IGNORECASE)
 
 
+def parse_schedule_spec(spec: str) -> tuple[str, str]:
+    """Parse ``settings.schedule``.
+
+    Returns:
+        ``('daily', 'HH:MM')`` for ``daily@00:01``
+        ``('every_hours', 'N')`` for ``every@6h``
+        ``('every_minutes', 'N')`` for ``every@30m``
+    """
+    text = spec.strip()
+    m = _DAILY_RE.match(text)
+    if m:
+        hour, minute = int(m.group(1)), int(m.group(2))
+        if not (0 <= hour <= 23 and 0 <= minute <= 59):
+            raise ValueError(f"Invalid time in schedule '{spec}'")
+        return "daily", f"{hour:02d}:{minute:02d}"
+
+    em = _EVERY_AT_RE.match(text)
+    if em:
+        n = int(em.group(1))
+        if n < 1:
+            raise ValueError(f"Interval in schedule '{spec}' must be at least 1")
+        unit = em.group(2).lower()
+        if unit == "h":
+            if n > 24 * 56:
+                raise ValueError(f"Hour interval too large in schedule '{spec}'")
+            return "every_hours", str(n)
+        if n > 7 * 24 * 60:
+            raise ValueError(f"Minute interval too large in schedule '{spec}'")
+        return "every_minutes", str(n)
+
+    raise ValueError(
+        f"Unsupported schedule spec '{spec}'. "
+        "Use 'daily@HH:MM' (e.g. 'daily@00:01'), 'every@6h', or 'every@30m'."
+    )
+
+
 def _parse_schedule(spec: str) -> tuple[str, str]:
-    """Return ('daily', 'HH:MM') or raise ValueError."""
-    m = _DAILY_RE.match(spec.strip())
-    if not m:
-        raise ValueError(
-            f"Unsupported schedule spec '{spec}'. Use 'daily@HH:MM' (e.g. 'daily@00:01')."
-        )
-    hour, minute = int(m.group(1)), int(m.group(2))
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise ValueError(f"Invalid time in schedule '{spec}'")
-    return "daily", f"{hour:02d}:{minute:02d}"
+    """Alias for :func:`parse_schedule_spec` (internal callers)."""
+    return parse_schedule_spec(spec)
 
 
 def _unit_is_hours(token: str) -> bool:
@@ -75,7 +104,10 @@ def _stdin_handle(line: str, *, guarded_fetch: Callable[[], None]) -> None:
         return
     if tokens[0] in ("fetch", "now"):
         log.info("stdin: immediate fetch")
-        guarded_fetch()
+        try:
+            guarded_fetch()
+        except Exception:
+            log.exception("stdin: immediate fetch failed")
         return
     if tokens and tokens[0] in ("jobs", "list", "ls"):
         sched_terminal.print_adhoc_schedule_message(_stdin_jobs_summary())
@@ -96,7 +128,7 @@ def _stdin_handle(line: str, *, guarded_fetch: Callable[[], None]) -> None:
         at_mm = f"{h:02d}:{mn:02d}"
 
         def _daily_extra() -> None:
-            guarded_fetch()
+            _run_scheduled_fetch(guarded_fetch)
 
         schedule.every().day.at(at_mm).do(_daily_extra).tag(TAG_ADHOC)
         sched_terminal.print_adhoc_schedule_message(f"Registered extra daily fetch at {at_mm} local time.")
@@ -113,7 +145,7 @@ def _stdin_handle(line: str, *, guarded_fetch: Callable[[], None]) -> None:
         hours = _unit_is_hours(token)
 
         def _interval_ping() -> None:
-            guarded_fetch()
+            _run_scheduled_fetch(guarded_fetch)
 
         if hours:
             if n > 24 * 56:
@@ -137,18 +169,34 @@ def _stdin_handle(line: str, *, guarded_fetch: Callable[[], None]) -> None:
     )
 
 
+def _run_scheduled_fetch(guarded_fetch: Callable[[], None]) -> None:
+    """Run one fetch; log failures so the outer loop never exits."""
+    try:
+        guarded_fetch()
+    except Exception:
+        log.exception("Scheduled fetch failed")
+    finally:
+        sched_terminal.print_next_automated_fetch(schedule.next_run())
+
+
 def run_loop(
     spec: str,
     job: Callable[[], None],
     *,
     stdin_commands: bool | None = None,
 ) -> None:
-    """Block forever, running `job` according to `spec` (``daily@HH:MM``).
+    """Block forever, running `job` according to `spec`.
+
+    Supported ``spec`` values (``config/servers.json`` → ``settings.schedule``):
+
+    - ``daily@HH:MM`` — once per day at local time (e.g. ``daily@00:01``)
+    - ``every@Nh`` — every N hours (e.g. ``every@6h``)
+    - ``every@Nm`` — every N minutes (e.g. ``every@30m``)
 
     When ``stdin_commands`` is true (default: ``sys.stdin.isatty()``), stdin is read
     in a background thread; lines are drained on the main thread so registering
     new ``schedule`` jobs stays thread-safe. Ad hoc registrations use tag
-    ``TAG_ADHOC`` — ``clear`` removes only those, not the YAML daily job.
+    ``TAG_ADHOC`` — ``clear`` removes only those, not the config-scheduled job.
     """
     if stdin_commands is None:
         stdin_commands = sys.stdin.isatty()
@@ -161,12 +209,26 @@ def run_loop(
     if kind == "daily":
 
         def _config_pass() -> None:
-            try:
-                guarded_fetch()
-            finally:
-                sched_terminal.print_next_automated_fetch(schedule.next_run())
+            _run_scheduled_fetch(guarded_fetch)
 
         schedule.every().day.at(at).do(_config_pass).tag(TAG_CONFIG_DAILY)
+        sched_terminal.print_daily_schedule_banner(spec=spec, hh_mm=at)
+    elif kind == "every_hours":
+        n = int(at)
+
+        def _config_pass() -> None:
+            _run_scheduled_fetch(guarded_fetch)
+
+        schedule.every(n).hours.do(_config_pass).tag(TAG_CONFIG_DAILY)
+        sched_terminal.print_interval_schedule_banner(spec=spec, n=n, unit="hour(s)")
+    elif kind == "every_minutes":
+        n = int(at)
+
+        def _config_pass() -> None:
+            _run_scheduled_fetch(guarded_fetch)
+
+        schedule.every(n).minutes.do(_config_pass).tag(TAG_CONFIG_DAILY)
+        sched_terminal.print_interval_schedule_banner(spec=spec, n=n, unit="minute(s)")
     else:
         raise ValueError(f"Unhandled schedule kind: {kind}")
 
@@ -187,27 +249,26 @@ def run_loop(
             daemon=True,
         ).start()
 
-    log.info("Scheduler started; next run target = %s (%s).", at, spec)
-    sched_terminal.print_daily_schedule_banner(spec=spec, hh_mm=at)
+    log.info("Scheduler started (%s).", spec)
     if stdin_commands:
         sched_terminal.print_stdin_schedule_hint()
 
     # Optional: also run once at startup so users see immediate output the first
     # time. Kept opt-out via env var if needed; here we just always run once.
-    try:
-        log.info("Running initial job at startup ...")
-        _config_pass()
-    except Exception:
-        log.exception("Initial job failed; continuing to scheduled runs.")
+    log.info("Running initial fetch at startup ...")
+    _run_scheduled_fetch(guarded_fetch)
 
     sleep_interval = 1.0 if stdin_commands else 30.0
 
     while True:
-        if cmd_q is not None:
-            try:
-                while True:
-                    _stdin_handle(cmd_q.get_nowait(), guarded_fetch=guarded_fetch)
-            except Empty:
-                pass
-        schedule.run_pending()
+        try:
+            if cmd_q is not None:
+                try:
+                    while True:
+                        _stdin_handle(cmd_q.get_nowait(), guarded_fetch=guarded_fetch)
+                except Empty:
+                    pass
+            schedule.run_pending()
+        except Exception:
+            log.exception("Scheduler loop error; continuing")
         time.sleep(sleep_interval)

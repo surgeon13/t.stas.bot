@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
+from requests.exceptions import ConnectionError as RequestsConnectionError, RequestException
 
 from .config import ServerConfig, Settings
 
@@ -55,13 +56,26 @@ def download_map_sql(server: ServerConfig, settings: Settings) -> DownloadResult
             resp.raise_for_status()
             content = resp.content
             break
-        except requests.RequestException as e:
+        except RequestException as e:
             last_err = e
             backoff = min(30, 2 ** attempt)
-            log.warning("Download failed (%s); retrying in %ds", e, backoff)
-            time.sleep(backoff)
+            if attempt < settings.max_retries:
+                log.warning("Download failed (%s); retrying in %ds", e, backoff)
+                time.sleep(backoff)
+            else:
+                log.warning("Download failed (%s); no more retries", e)
     else:
-        raise RuntimeError(f"Failed to download {url} after {settings.max_retries} attempts") from last_err
+        assert last_err is not None
+        err_message = str(last_err).strip() or "unknown error"
+        hint = ""
+        if isinstance(last_err, RequestsConnectionError):
+            if "NameResolutionError" in err_message or "Failed to resolve" in err_message:
+                hint = " Hostname could not be resolved; check DNS, network, or your config/servers.json base_url."
+            elif "Connection refused" in err_message or "Connection reset" in err_message:
+                hint = " Connection refused; verify the server address and that the remote service is reachable."
+        raise RuntimeError(
+            f"Failed to download {url} after {settings.max_retries} attempts: {err_message}{hint}"
+        ) from last_err
 
     fetched_at = datetime.now(timezone.utc)
     sha = hashlib.sha256(content).hexdigest()

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 
 from .config import load_config
@@ -58,26 +59,28 @@ def start_embedded_fetch_scheduler(
             return True
         _started = True
 
-    cfg = load_config(cfg_path)
-
     def job() -> None:
-        fetch_all_enabled_servers(cfg, db_path)
+        live = load_config(cfg_path)
+        fetch_all_enabled_servers(live, db_path)
 
     def runner() -> None:
-        log.warning(
-            "Embedded fetch scheduler active (%s → %s). "
-            "Do not run `python main.py run` separately or you will duplicate fetches.",
-            cfg.settings.schedule,
-            db_path.resolve(),
-        )
-        try:
-            scheduler.run_loop(
+        while True:
+            cfg = load_config(cfg_path)
+            log.warning(
+                "Embedded fetch scheduler active (%s → %s). "
+                "Do not run `python main.py run` separately or you will duplicate fetches.",
                 cfg.settings.schedule,
-                job,
-                stdin_commands=_embed_sched_stdin_commands(),
+                db_path.resolve(),
             )
-        except Exception:
-            log.exception("Embedded scheduler exited with error")
+            try:
+                scheduler.run_loop(
+                    cfg.settings.schedule,
+                    job,
+                    stdin_commands=_embed_sched_stdin_commands(),
+                )
+            except Exception:
+                log.exception("Embedded scheduler exited with error; restarting in 60s")
+                time.sleep(60)
 
     t = threading.Thread(
         target=runner,

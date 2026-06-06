@@ -1,8 +1,8 @@
 dashboard:
-  map_palette: parchment
+  map_palette: ocean
   chart_size: spacious
-  chart_colors: cool
+  chart_colors: royal
   chart_renderer: altair
   overview_bar_kind: vertical
-  app_theme: slate_warm
+  app_theme: graphite_grey
   appearance: dark
