@@ -1,6 +1,6 @@
 # t.statistics.stas.bot
 
-**Version 1.1.1**
+**Version 1.1.2**
 
 A small app that downloads `map.sql` from one or more Travian servers, parses it,
 and stores each snapshot in SQLite so you can build a persistent, time-aware view
@@ -21,7 +21,7 @@ See **[GitHub](#github)** below.
 
 ## Release / export
 
-This release is prepared as version **1.1.1**.
+This release is prepared as version **1.1.2**.
 
 To create a clean handoff archive without personal data, run:
 
@@ -89,7 +89,14 @@ scripts\install_requirements.bat
 
 ## Quick start
 
-1. Ensure `config/servers.json` exists by copying the example and editing the server entries:
+**Windows — double-click (after `scripts\install_requirements.bat` once):**
+
+| File | What it does |
+|------|----------------|
+| **`Start Dashboard.bat`** | Browser UI + daily auto-fetch (recommended) |
+| **`Start Collector.bat`** | Fetch loop only, no browser |
+
+1. Ensure `config/servers.json` exists by copying the example and editing the server entries (launchers create it from the example if missing):
 
 ```powershell
 copy config\servers.json.example config\servers.json
