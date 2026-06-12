@@ -1,6 +1,6 @@
 [project]
 name = "t-statistics-stas-bot"
-version = "1.1.0"
+version = "1.1.1"
 description = "Travian map.sql collector, analyzer, and dashboard."
 readme = "README.md"
 requires-python = ">=3.10"

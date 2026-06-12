@@ -464,6 +464,7 @@ def cmd_inactives(args: argparse.Namespace) -> int:
             limit=args.limit,
             player_total_pop_min=int(args.player_pop_min),
             player_total_pop_max=int(args.player_pop_max),
+            flat_mode=str(getattr(args, "flat_mode", "latest_pair")),
         )
     view.render_inactives_near(
         rows,
@@ -600,6 +601,13 @@ def build_parser() -> argparse.ArgumentParser:
         default=0,
         metavar="N",
         help="max total population of owning player in latest snapshot (0 = no filter)",
+    )
+    sp.add_argument(
+        "--flat-mode",
+        choices=["latest_pair", "all_history"],
+        default="latest_pair",
+        dest="flat_mode",
+        help="latest_pair = unchanged pop between last two snapshots; all_history = flat across all stored snapshots",
     )
     sp.set_defaults(func=cmd_inactives)
 

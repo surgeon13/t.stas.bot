@@ -1,6 +1,6 @@
 # t.statistics.stas.bot
 
-**Version 1.1.0**
+**Version 1.1.1**
 
 A small app that downloads `map.sql` from one or more Travian servers, parses it,
 and stores each snapshot in SQLite so you can build a persistent, time-aware view
@@ -21,7 +21,7 @@ See **[GitHub](#github)** below.
 
 ## Release / export
 
-This release is prepared as version **1.1.0**.
+This release is prepared as version **1.1.1**.
 
 To create a clean handoff archive without personal data, run:
 

@@ -11,11 +11,14 @@ from pathlib import Path
 from .config import load_config
 from . import scheduler
 from .fetch_ingest import fetch_all_enabled_servers
+from .runtime_hooks import register_after_fetch
 
 log = logging.getLogger(__name__)
 
 _lock = threading.Lock()
 _started = False
+_last_fetch_at: str | None = None
+_last_fetch_error: str | None = None
 
 
 def embedded_scheduler_enabled() -> bool:
@@ -26,6 +29,27 @@ def embedded_scheduler_enabled() -> bool:
     if v in ("0", "false", "no", "off"):
         return False
     return True
+
+
+def embedded_scheduler_started() -> bool:
+    return _started
+
+
+def embedded_scheduler_last_fetch_at() -> str | None:
+    return _last_fetch_at
+
+
+def embedded_scheduler_last_fetch_error() -> str | None:
+    return _last_fetch_error
+
+
+def _clear_streamlit_caches() -> None:
+    try:
+        import streamlit as st
+
+        st.cache_data.clear()
+    except Exception:
+        log.debug("streamlit cache clear skipped (not in Streamlit context)")
 
 
 def _embed_sched_stdin_commands() -> bool:
@@ -59,9 +83,18 @@ def start_embedded_fetch_scheduler(
             return True
         _started = True
 
+    register_after_fetch(_clear_streamlit_caches)
+
     def job() -> None:
+        global _last_fetch_at, _last_fetch_error
         live = load_config(cfg_path)
-        fetch_all_enabled_servers(live, db_path)
+        try:
+            fetch_all_enabled_servers(live, db_path)
+            _last_fetch_at = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+            _last_fetch_error = None
+        except Exception as e:
+            _last_fetch_error = str(e)
+            log.exception("Embedded fetch job failed")
 
     def runner() -> None:
         while True:

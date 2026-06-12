@@ -7,6 +7,7 @@ from pathlib import Path
 
 from . import downloader, parser, sched_terminal, storage
 from .config import AppConfig, ServerConfig
+from .runtime_hooks import notify_after_fetch
 
 log = logging.getLogger(__name__)
 
@@ -66,3 +67,4 @@ def fetch_all_enabled_servers(cfg: AppConfig, db_path: Path) -> None:
             fetch_one_server(cfg, s, db_path)
         except Exception:
             log.exception("Fetch failed for server %s", s.key)
+    notify_after_fetch()

@@ -74,8 +74,12 @@ from src import analyzer, storage
 from src.config import AppConfig, ServerConfig, load_config
 from src.embed_scheduler import (
     embedded_scheduler_enabled,
+    embedded_scheduler_last_fetch_at,
+    embedded_scheduler_last_fetch_error,
+    embedded_scheduler_started,
     start_embedded_fetch_scheduler,
 )
+from src.fetch_ingest import fetch_all_enabled_servers
 from src.custom_maps import (
     CustomMapPreset,
     load_custom_maps,
@@ -867,19 +871,37 @@ st.sidebar.markdown(
     f"**Latest**: {pd.to_datetime(snapshots_df.iloc[0]['fetched_at']).strftime('%Y-%m-%d %H:%M UTC')}"
 )
 st.sidebar.markdown("---")
+st.sidebar.markdown("##### Map collection")
 _embed_on = embedded_scheduler_enabled()
-_sched_note = (
-    "**Background fetch is ON** inside this Streamlit process (default). "
-    "Do **not** also run `python main.py run`."
-    if _embed_on
-    else "Embedded fetch **off**: run **`python main.py run`** (or Task Scheduler "
-    "~ `scripts/run_daily_fetch.bat`). **Either** embedded **or** `main.py run` — not both."
+if _embed_on:
+    st.sidebar.success(
+        f"Daily fetch **ON** — schedule **`{cfg.settings.schedule}`** (local time)."
+    )
+    if embedded_scheduler_started():
+        st.sidebar.caption("Background scheduler thread is running in this process.")
+    _lf = embedded_scheduler_last_fetch_at()
+    if _lf:
+        st.sidebar.caption(f"Last automated fetch finished: **{_lf}** (local).")
+    _lfe = embedded_scheduler_last_fetch_error()
+    if _lfe:
+        st.sidebar.error(f"Last fetch error: {_lfe}")
+    st.sidebar.caption("Do **not** also run `python main.py run` against the same DB.")
+else:
+    st.sidebar.warning(
+        "Embedded fetch **OFF** (`T_STATS_EMBED_SCHEDULER=0`). "
+        "Run `python main.py` or `scripts/run_daily_fetch.bat` elsewhere."
+    )
+if st.sidebar.button("Fetch now (all enabled servers)", key="sidebar_fetch_now"):
+    with st.spinner("Downloading map.sql and updating database…"):
+        fetch_all_enabled_servers(cfg, DB_PATH)
+        st.cache_data.clear()
+    st.sidebar.success("Fetch complete — reloading dashboard.")
+    st.rerun()
+st.sidebar.caption(
+    "Set **`settings.schedule`** in `config/servers.json` (e.g. `daily@00:01`). "
+    "The dashboard auto-refreshes cached tables after each fetch."
 )
-st.sidebar.markdown(
-    f"**New data**: map fetches default to **`{cfg.settings.schedule}`** (this machine's local clock) "
-    f"inside Streamlit unless you disable with **`T_STATS_EMBED_SCHEDULER=0`** before launch. {_sched_note} "
-    "All setups share `statistics.db` — refresh the browser after a snapshot lands."
-)
+st.sidebar.markdown("---")
 
 
 # ---------------------------------------------------------------------------
@@ -4036,18 +4058,34 @@ with tab_custom_maps:
 with tab_inactives:
     st.subheader(f"Inactive search — {server.name}")
     st.caption(
-        "Villages whose **population never changed** across stored snapshots (proxy for inactive "
-        "accounts). Search a tile ring (**minimum** / **maximum** radius) from a center. The **map** shows **every** match returned "
-        "(up to **Max results**); use **CSV** for game list workflows. Defaults: **config/servers.json** "
-        "(`inactive_search_radius`, `inactive_min_snapshots`, `inactive_exclude_npc`)."
+        "Find villages whose population looks **stuck** (inactive-farm proxy). "
+        "Use **Latest vs previous** with only 2 daily snapshots; use **Entire history** when you "
+        "have many fetches stored. Search a tile ring (**min** / **max** radius) from a center."
     )
-    if len(snapshots_df) < int(cfg.settings.inactive_min_snapshots):
+    if len(snapshots_df) < 2:
         st.warning(
-            f"Need at least **{cfg.settings.inactive_min_snapshots}** snapshots for this search "
-            f"(you have {len(snapshots_df)}). Run `python main.py fetch` more often."
+            f"Need at least **2** snapshots for inactive search (you have {len(snapshots_df)}). "
+            "Use **Fetch now** in the sidebar or wait for the daily schedule."
         )
     else:
         _s = cfg.settings
+        flat_mode = st.selectbox(
+            "Population rule",
+            options=("latest_pair", "all_history"),
+            format_func=lambda k: (
+                "No change — latest vs previous snapshot (recommended)"
+                if k == "latest_pair"
+                else "No change — entire stored history (strict)"
+            ),
+            key="inactive_flat_mode",
+            help="**Latest vs previous** compares only the two newest snapshots (best for daily auto-fetch).",
+        )
+        if flat_mode == "all_history" and len(snapshots_df) < int(_s.inactive_min_snapshots):
+            st.info(
+                f"**Entire history** mode uses **min snapshots / village** (default "
+                f"{_s.inactive_min_snapshots}). You have {len(snapshots_df)} stored — "
+                "fetch more or switch to **Latest vs previous**."
+            )
         c1, c2, c3 = st.columns(3)
         cx = c1.number_input("Center x", value=0, step=1, key="inactive_cx")
         cy = c2.number_input("Center y", value=0, step=1, key="inactive_cy")
@@ -4137,6 +4175,7 @@ with tab_inactives:
                     limit=int(row_limit),
                     player_total_pop_min=_ppmn,
                     player_total_pop_max=_ppmx,
+                    flat_mode=flat_mode,
                 )
                 st.session_state["inactive_last"] = {
                     "rows": [asdict(r) for r in found],
@@ -4144,11 +4183,17 @@ with tab_inactives:
                     "cy": int(cy),
                     "rad_min": _rmin,
                     "rad_max": _rmax,
+                    "flat_mode": flat_mode,
+                    "snapshot_count": len(snapshots_df),
                     "limit_used": int(row_limit),
                     "hit_cap": len(found) >= int(row_limit) and int(row_limit) > 0,
                 }
 
         last = st.session_state.get("inactive_last")
+        if last and last.get("snapshot_count") != len(snapshots_df):
+            st.info(
+                "New snapshot(s) since this search — click **Search** again for up-to-date inactives."
+            )
         if last and last.get("rows") is not None:
             st.metric("Matches", len(last["rows"]))
             df_i = pd.DataFrame(last["rows"])
@@ -4217,7 +4262,7 @@ with tab_inactives:
                 show = _apply_coords_game_links(
                     df_i[
                         ["village_id", "village_name", "x", "y", "distance_tiles",
-                         "population", "player_id", "player_name",
+                         "population", "player_total_pop", "player_id", "player_name",
                          "alliance_id", "alliance_name", "tribe_name",
                          "snapshots_seen"]
                     ],
@@ -4240,6 +4285,7 @@ with tab_inactives:
                 show = show.drop(
                     columns=["player_id", "player_name", "alliance_id", "alliance_name"]
                 )
+                show = show.rename(columns={"player_total_pop": "player pop"})
                 show = show[
                     [
                         "village_id",
@@ -4247,6 +4293,7 @@ with tab_inactives:
                         "coords",
                         "dist",
                         "population",
+                        "player pop",
                         "tribe",
                         "snapshots",
                         "player",

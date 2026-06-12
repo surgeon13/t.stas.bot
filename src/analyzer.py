@@ -1846,7 +1846,7 @@ def alliance_villages_destroyed(
 
 @dataclass(frozen=True)
 class InactiveNearRow:
-    """Village in the latest snapshot: flat population across history, inside radius."""
+    """Village in the latest snapshot: flat population, inside radius."""
 
     village_id: int
     village_name: str
@@ -1860,6 +1860,7 @@ class InactiveNearRow:
     tribe_name: str
     snapshots_seen: int
     distance_tiles: float
+    player_total_pop: int = 0
 
 
 def inactive_villages_near(
@@ -1875,18 +1876,21 @@ def inactive_villages_near(
     limit: int | None = None,
     player_total_pop_min: int = 0,
     player_total_pop_max: int = 0,
+    flat_mode: str = "latest_pair",
 ) -> list[InactiveNearRow]:
     """Villages that (1) exist in the latest snapshot, (2) lie within the
     Euclidean tile ring ``radius_min`` … ``radius_max`` of ``(center_x, center_y)``
-    (inclusive), and (3) have **constant** population in every stored snapshot
-    where they appear (needs at least ``min_snapshots`` observations).
+    (inclusive), and (3) match an inactive population rule:
 
-    Optional: ``player_total_pop_min`` / ``player_total_pop_max`` (values ``<= 0`` disable that
-    side of the filter) restrict by the owning player's **total** population summed over all
-    their villages in the **latest** snapshot.
+    - ``latest_pair`` (default): population unchanged between the **latest two**
+      snapshots and village present in both (works well with daily fetches).
+    - ``all_history``: population never changed across **all** stored snapshots
+      (needs at least ``min_snapshots`` observations).
 
-    This is a practical proxy for “inactive” accounts when you only have
-    map.sql time series — not login activity.
+    ``player_total_pop_min`` / ``player_total_pop_max`` (``<= 0`` disables that bound)
+    filter by the owner's **total** population in the latest snapshot.
+
+    This is a practical proxy for “inactive” accounts — not login activity.
     """
     radius_min = max(0, int(radius_min))
     radius_max = int(radius_max)
@@ -1895,14 +1899,47 @@ def inactive_villages_near(
     if min_snapshots < 2:
         min_snapshots = 2
 
+    mode = str(flat_mode or "latest_pair").strip().lower()
+    if mode not in ("latest_pair", "all_history"):
+        raise ValueError(f"flat_mode must be 'latest_pair' or 'all_history', got {flat_mode!r}")
+
+    latest = storage.latest_snapshot(conn, server_key)
+    if latest is None:
+        return []
+    if mode == "latest_pair":
+        prev = storage.previous_snapshot(conn, server_key, int(latest["id"]))
+        if prev is None:
+            return []
+
     min_rsq = radius_min * radius_min
     max_rsq = radius_max * radius_max
     npc_sql = ""
     if exclude_npc:
         npc_sql = "AND v.player_id != 0 AND v.tribe_id NOT IN (4, 5)"
 
-    sql = f"""
-        WITH village_pop_stats AS (
+    if mode == "latest_pair":
+        flat_join = """
+        INNER JOIN (
+            SELECT l.village_id
+            FROM villages l
+            INNER JOIN latest lat ON l.snapshot_id = lat.sid
+            INNER JOIN prev_snap ps ON 1 = 1
+            INNER JOIN villages prv
+                ON prv.village_id = l.village_id AND prv.snapshot_id = ps.sid
+            WHERE l.population = prv.population
+        ) flat ON flat.village_id = v.village_id
+        INNER JOIN (
+            SELECT v2.village_id,
+                   COUNT(DISTINCT v2.snapshot_id) AS n_obs
+            FROM villages v2
+            INNER JOIN snapshots s2 ON s2.id = v2.snapshot_id AND s2.server_key = :sk
+            GROUP BY v2.village_id
+        ) obs ON obs.village_id = v.village_id AND obs.n_obs >= :min_snaps
+        """
+        obs_col = "obs.n_obs"
+    else:
+        flat_join = """
+        INNER JOIN (
             SELECT v.village_id,
                    COUNT(DISTINCT v.snapshot_id) AS n_obs,
                    MIN(COALESCE(v.population, 0)) AS pmin,
@@ -1911,12 +1948,22 @@ def inactive_villages_near(
             INNER JOIN snapshots s ON s.id = v.snapshot_id AND s.server_key = :sk
             GROUP BY v.village_id
             HAVING n_obs >= :min_snaps AND pmin = pmax
-        ),
-        latest AS (
+        ) ps ON ps.village_id = v.village_id
+        """
+        obs_col = "ps.n_obs"
+
+    sql = f"""
+        WITH latest AS (
             SELECT id AS sid FROM snapshots
             WHERE server_key = :sk
             ORDER BY fetched_at DESC, id DESC
             LIMIT 1
+        ),
+        prev_snap AS (
+            SELECT id AS sid FROM snapshots
+            WHERE server_key = :sk
+            ORDER BY fetched_at DESC, id DESC
+            LIMIT 1 OFFSET 1
         ),
         player_totals AS (
             SELECT vq.player_id AS pid, SUM(COALESCE(vq.population, 0)) AS ptot
@@ -1926,18 +1973,19 @@ def inactive_villages_near(
         )
         SELECT v.village_id, v.village_name, v.x, v.y, v.population,
                v.player_id, v.player_name, v.alliance_id, v.alliance_name, v.tribe_id,
-               ps.n_obs AS snapshots_seen,
+               {obs_col} AS snapshots_seen,
+               COALESCE(pt.ptot, 0) AS player_total_pop,
                (v.x - :cx) * (v.x - :cx) + (v.y - :cy) * (v.y - :cy) AS dist_sq
         FROM villages v
         CROSS JOIN latest l
-        INNER JOIN village_pop_stats ps ON ps.village_id = v.village_id
-        INNER JOIN player_totals pt ON pt.pid = v.player_id
+        {flat_join}
+        LEFT JOIN player_totals pt ON pt.pid = v.player_id
         WHERE v.snapshot_id = l.sid
           AND (v.x - :cx2) * (v.x - :cx2) + (v.y - :cy2) * (v.y - :cy2) >= :min_rsq
           AND (v.x - :cx2) * (v.x - :cx2) + (v.y - :cy2) * (v.y - :cy2) <= :max_rsq
           {npc_sql}
-          AND (:ppp_min <= 0 OR pt.ptot >= :ppp_min)
-          AND (:ppp_max <= 0 OR pt.ptot <= :ppp_max)
+          AND (:ppp_min <= 0 OR COALESCE(pt.ptot, 0) >= :ppp_min)
+          AND (:ppp_max <= 0 OR COALESCE(pt.ptot, 0) <= :ppp_max)
         ORDER BY dist_sq ASC, v.village_id ASC
     """
     params: dict[str, Any] = {
@@ -1975,6 +2023,7 @@ def inactive_villages_near(
                 tribe_name=TRIBE_NAMES.get(tid, f"tribe_{tid}"),
                 snapshots_seen=int(r["snapshots_seen"]),
                 distance_tiles=math.sqrt(dist_sq),
+                player_total_pop=int(r["player_total_pop"] or 0),
             )
         )
     return out
