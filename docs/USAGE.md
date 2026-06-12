@@ -1,12 +1,12 @@
 # Usage handbook
 
-This document is the full reference for **[t.statistics.stas.bot](../README.md)**: configuration, CLI, environment variables, the Streamlit dashboard, scheduling, and handing the project to someone else.
+Full reference for **[t.statistics.stas.bot](../README.md)** (v1.1.2): configuration, Windows launchers, CLI, environment variables, Streamlit dashboard, scheduling, and handoff.
 
 ## What the app does
 
-1. For each entry in **`config/servers.json`** → **`servers`**, it downloads **`/map.sql`** (Travian world snapshot).
-2. Raw files are optionally kept under **`data/snapshots/<server_key>/`** (ignored by git).
-3. Parsed rows go into **`statistics.db`** (SQLite; also gitignored): snapshot metadata plus one row per village per snapshot.
+1. For each entry in **`config/servers.json`** → **`servers`**, it downloads public **`/map.sql`** (Travian world snapshot). **No game login** — only the same public dump the browser can request.
+2. Raw files are optionally kept under **`data/snapshots/<server_key>/`** (gitignored).
+3. Parsed rows go into **`statistics.db`** (SQLite; gitignored): snapshot metadata plus one row per village per snapshot.
 4. Identical consecutive downloads are skipped (SHA-256 deduplication).
 
 Anything that compares “then vs now” needs **at least two snapshots** per server.
@@ -15,163 +15,229 @@ Anything that compares “then vs now” needs **at least two snapshots** per se
 
 Requires **Python 3.10+**.
 
+### Windows (recommended)
+
 ```powershell
 cd path\to\t.statistics.stas.bot
+scripts\install_requirements.bat
+```
+
+That creates **`.venv`** and installs **`requirements.txt`**.
+
+| Launcher | What it does |
+|----------|----------------|
+| **`Start Dashboard.bat`** (project root) | Streamlit UI + **embedded daily fetch** (recommended) |
+| **`Start Collector.bat`** | Fetch loop only, no browser |
+| **`scripts\run_dashboard_with_scheduler.bat`** | Same as **Start Dashboard.bat** |
+| **`scripts\run_daily_fetch.bat`** | Same as **Start Collector.bat** |
+
+Launchers:
+
+- Use **`.venv\Scripts\python.exe`** when present.
+- Create **`config\servers.json`** from **`config\servers.json.example`** if missing.
+
+### Manual setup
+
+```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+copy config\servers.json.example config\servers.json
+python main.py fetch
+python -m streamlit run dashboard.py
 ```
 
-1. Ensure **`config/servers.json`** exists: after cloning, copy **`config/servers.json.example`** → **`config/servers.json`**, then edit or **`python main.py add-server …`**.
-2. Fetch once:
+### Default server template
 
-   ```powershell
-   python main.py list-servers
-   python main.py fetch
-   ```
+**`config/servers.json.example`** ships with **International 50 (x5)**:
 
-3. Inspect data:
+- **key:** `international50x5`
+- **base_url:** `https://ts50.x5.international.travian.com`
 
-   ```powershell
-   python main.py snapshots
-   python main.py analyze --server <your-server-key>
-   ```
-
-4. Optional browser UI:
-
-   ```powershell
-   python -m streamlit run dashboard.py
-   ```
+Edit **`config/servers.json`** or run **`python main.py add-server …`** for other worlds.
 
 ## Configuration files
 
 | File | Purpose |
 |------|---------|
-| **`config/servers.json`** | Single app config for **Travian worlds**: top-level **`servers`** (array) and **`settings`** (object — schedule `daily@HH:MM`, `every@6h`, or `every@30m`; HTTP; inactive-search defaults; optional dashboard pins). Omit **`settings`** keys you want left at defaults. |
-| **`config/servers.json.example`** | Full template mirroring shipped defaults. |
-| **`config/ui.yaml`** | Dashboard preferences: map palette, chart density, Plotly/chart colors, Altair vs other chart paths, overview bar style, app theme (`app_theme`), light/dark **`appearance`**. The interactive **`menu`** command reads the same **`--ui`** path. |
-| **`config/custom_maps.yaml`** | Named map configs for the **Custom** tab (regions, overlays). |
+| **`config/servers.json`** | **`servers[]`** (worlds) and **`settings`** (schedule, HTTP, inactive defaults, optional dashboard watchlists). **Gitignored** — copy from example after clone. |
+| **`config/servers.json.example`** | Shipped template. |
+| **`config/ui.yaml`** | Dashboard: map palette, chart size/colors, Plotly backend, overview bar style, **`app_theme`**, light/dark **`appearance`**. |
+| **`config/custom_maps.yaml`** | Named regions for the **Custom** tab. |
+
+### `settings` highlights (`config/servers.json`)
+
+| Key | Meaning |
+|-----|---------|
+| **`schedule`** | `daily@00:01` (local time), `every@6h`, or `every@30m` |
+| **`inactive_search_radius`** | Default **maximum** radius (tiles) for inactive search in the dashboard |
+| **`inactive_min_snapshots`** | Default min observations per village for **entire history** inactive mode |
+| **`inactive_exclude_npc`** | Exclude Nature/Natars / unowned when `true` |
+| **`keep_raw_snapshots`** | Save raw `map.sql` under **`data/snapshots/`** |
 
 Global CLI overrides:
 
-- **`--config path`** — Travian/app JSON (**default `config/servers.json`**). Streamlit reads **`T_STATS_CONFIG`** (**same default**) because it does not pass **`main.py`’s **`--config`**.
-- **`--db path`** — alternate SQLite path (default: **`statistics.db`**).
+- **`--config path`** — app JSON (default **`config/servers.json`**).
+- **`--db path`** — SQLite path (default **`statistics.db`**).
 
-### Environment variables (dashboard-focused)
+### Environment variables
 
-These are read when you run **`streamlit run dashboard.py`** (see `dashboard.py` / `src/embed_scheduler.py`):
+| Variable | Used by | Meaning |
+|----------|---------|---------|
+| **`T_STATS_DB`** | CLI, dashboard | SQLite path (default **`statistics.db`**). |
+| **`T_STATS_CONFIG`** | Dashboard | App JSON path (default **`config/servers.json`**). |
+| **`T_STATS_EMBED_SCHEDULER`** | Dashboard | Default **on**. Set **`0`** / **`false`** to disable background fetch in Streamlit. |
+| **`T_STATS_EMBED_SCHED_STDIN`** | Dashboard | Set **`1`** for stdin ad-hoc schedule commands (rare). |
+| **`T_STATS_MENU_RAW`** | `menu` | Set **`1`** for single-key menu mode without Enter. |
 
-| Variable | Meaning |
-|---------|---------|
-| **`T_STATS_DB`** | SQLite path; default **`statistics.db`**. Keeps CLI and dashboard on the same file if both run on one machine. |
-| **`T_STATS_CONFIG`** | Path to app JSON (**default `config/servers.json`**). |
-| **`T_STATS_EMBED_SCHEDULER`** | If unset, the dashboard **starts the same daily fetch loop** as `python main.py run` in a background thread. Set to **`0`** or **`false`** to disable embedded fetching (dashboard read-only for collection). |
-| **`T_STATS_EMBED_SCHED_STDIN`** | Set **`1`** to allow the embedded scheduler’s ad hoc stdin commands (stdin is awkward when shared with Streamlit; usually leave unset). |
+**Do not** run **`python main.py run`** and the dashboard embedded fetch on the **same DB** unless you want duplicate downloads.
 
-### Environment variables (terminal menu)
+## Collection and scheduling
 
-| Variable | Meaning |
-|---------|---------|
-| **`T_STATS_MENU_RAW`** | If **`1`**, **`python main.py menu`** defaults to immediate single-character keys unless you override with **`--line-input`**. Useful in raw terminals or when you prefer “press key without Enter”. |
+| Pattern | When to use |
+|---------|-------------|
+| **`Start Dashboard.bat`** | Browser UI + daily auto-fetch in one process (default **on**). |
+| **`Start Collector.bat`** / **`python main.py`** | Long-lived fetch loop, no UI. |
+| **`python main.py fetch`** | One-shot download. |
+| Windows Task Scheduler → **`main.py fetch`** | External daily trigger; process exits after fetch. |
 
-Never run **`python main.py run`** and the dashboard’s embedded fetch at the **same schedule** against the **same DB** unless you deliberately want duplicate work; both implement daily collection.
+**`python main.py`** with no subcommand defaults to **`run --no-schedule-stdin`** (unattended loop).
+
+Schedule string lives in **`config/servers.json`** → **`settings.schedule`**.
+
+### Dashboard sidebar (when using Streamlit)
+
+- **Daily fetch ON** — shows schedule from config.
+- **Fetch now** — manual `map.sql` download + DB update; clears dashboard caches.
+- **Last automated fetch** — timestamp when the embedded job last completed.
+
+Coordinate columns in tables link to **`position_details.php`** on the configured **`base_url`** (opens Travian map in a new browser tab).
 
 ## CLI reference
-
-Discover everything from the shell:
 
 ```powershell
 python main.py --help
 python main.py fetch --help
 ```
 
-### Global flags (all subcommands)
+### Global flags
 
-- **`--config`** — app JSON (**`config/servers.json`** by default).
-- **`--db`** — SQLite path.
-- **`-v` / `--verbose`** — DEBUG logging.
+- **`--config`**, **`--db`**, **`-v` / `--verbose`**
 
 ### Subcommands
 
 | Command | Purpose |
 |---------|---------|
-| **`menu`** | Interactive terminal hub: fetch, refresh views, opens settings pointers. **`--ui config/ui.yaml`**, **`--line-input`**, **`--quick-keys`**. |
-| **`list-servers`** | Print configured servers and schedule hints. |
-| **`add-server`** | Append one object to **`servers`** in **`--config`** (default **`config/servers.json`**). **`--dry-run`** prints JSON only. Flags: **`--key`**, **`--name`**, **`--base-url`**, repeatable **`--tag`**, **`--disable`**. |
-| **`fetch`** | Download and ingest **`map.sql`** for all enabled servers, or **`--server <key>`** for one. |
-| **`snapshots`** | List stored snapshots; **`--server`**, **`--limit`**. |
-| **`analyze`** | Latest snapshot summary + tribe breakdown + top players/alliances; **`--top`**. |
-| **`players`** | Player ranking with delta vs previous snapshot; **`--sort`** `population` or `villages`. |
-| **`player`** | One player: history + village ledger; **`--id`** or **`--name`**; **`--no-villages`**. |
-| **`alliances`** | Alliance ranking; **`--sort`** `population`, `members`, or `villages`. |
-| **`alliance`** | One alliance history; **`--id`** or **`--name`**. |
-| **`villages`** | Village ranking; **`--sort`** `population`, `growth`, or `loss`; **`--player`** (id or name). |
-| **`village`** | One village history; **`--id`** or **`--name`**. |
-| **`events`** | Diff between snapshots (default: latest pair); **`--kind`**, **`--from-id`**, **`--to-id`**, **`--limit`**. |
-| **`inactives`** | Villages near **`--x`** / **`--y`** with flat population over history; **`--radius`**, **`--min-snapshots`**, **`--include-npc`**, **`--limit`**, **`--player-pop-min`**, **`--player-pop-max`**. Requires enough stored snapshots (`inactive_min_snapshots` in settings). |
-| **`run`** | Foreground scheduler loop (`settings.schedule`: **`daily@HH:MM`**, **`every@Nh`**, **`every@Nm`**). Ad hoc stdin commands unless **`--no-schedule-stdin`**. **`python main.py`** with no subcommand defaults to **`run --no-schedule-stdin`**. |
+| **`menu`** | Terminal hub: fetch, UI settings pointers. |
+| **`list-servers`** | Configured worlds + schedule. |
+| **`add-server`** | Append to **`servers`** (`--key`, `--name`, `--base-url`, `--tag`, `--disable`, `--dry-run`). |
+| **`fetch`** | Download + ingest; optional **`--server`**. |
+| **`snapshots`** | List stored snapshots. |
+| **`analyze`** | Latest summary + tribes + tops; **`--top`**. |
+| **`players`**, **`player`** | Rankings and drill-down; **`--sort`**, **`--id`**, **`--name`**. |
+| **`alliances`**, **`alliance`** | Alliance rankings and history. |
+| **`villages`**, **`village`** | Village rankings and history; **`--sort`**, **`--player`**. |
+| **`events`** | Snapshot diff; **`--kind`**, **`--from-id`**, **`--to-id`**. |
+| **`inactives`** | Flat-population search near **`--x`** / **`--y`** (see below). |
+| **`run`** | Scheduler loop; **`--no-schedule-stdin`** for unattended mode. |
 
-Examples:
+### Inactives (CLI)
+
+Finds villages whose population looks **stuck** (inactive-farm proxy — not login activity).
 
 ```powershell
-python main.py events --server europe31x3 --kind chiefed
-python main.py inactives --server europe31x3 --x 10 --y -20 --radius 15
-python main.py run --no-schedule-stdin   # daemon-like: no stdin commands
+python main.py inactives --server international50x5 --x 10 --y -20
+python main.py inactives --server international50x5 --x 10 --y -20 ^
+  --radius-min 0 --radius 30 ^
+  --flat-mode latest_pair ^
+  --player-pop-max 500
 ```
+
+| Flag | Meaning |
+|------|---------|
+| **`--radius`** | **Maximum** distance from center (tiles); default **`inactive_search_radius`**. |
+| **`--radius-min`** | **Minimum** distance (0 = include center tile). |
+| **`--flat-mode`** | **`latest_pair`** (default) — unchanged pop between **last two** snapshots; **`all_history`** — flat across **all** stored snapshots. |
+| **`--min-snapshots`** | Min observations per village (mainly for **`all_history`**). |
+| **`--player-pop-min`**, **`--player-pop-max`** | Filter by owner’s **total** pop in latest snapshot; **`0`** disables that bound. |
+| **`--include-npc`** | Include Nature/Natars / unowned. |
+| **`--limit`** | Max rows printed. |
+
+**Tip:** With only **2 daily snapshots**, use **`--flat-mode latest_pair`**.
+
+### Examples
+
+```powershell
+python main.py fetch --server international50x5
+python main.py events --server international50x5 --kind chiefed
+python main.py run --no-schedule-stdin
+```
+
+After **`pip install -e .`**, the console entry point **`t-statistics`** is available with the same subcommands.
 
 ## Streamlit dashboard tabs
 
-Launch: **`python -m streamlit run dashboard.py`** (same DB as **`main.py`** unless you changed **`T_STATS_DB`**).
+Launch: **`Start Dashboard.bat`** or **`python -m streamlit run dashboard.py`**.
 
-The UI has **twelve** top-level tabs (order as in code):
+| Tab | Purpose |
+|-----|---------|
+| **Overview** | Server KPIs over time, tribe charts. |
+| **Leaderboards** | Top alliances, players, villages. |
+| **Players** | Table + drill-down; player map (green/red/yellow layers). |
+| **Alliances** | Table + drill-down; alliance territory maps. |
+| **Villages** | Sortable table; village detail. |
+| **Map** | Full-world Plotly map; highlight player/alliance/tribe. |
+| **Custom** | **`config/custom_maps.yaml`** presets. |
+| **Inactives** | Ring search around center; map + table + CSV (see below). |
+| **Natars (NPC)** | Tribe 5 / NPC search. |
+| **Nature** | Tribe 4 when present in `map.sql`. |
+| **Events** | Diff between two snapshots. |
+| **Snapshots** | Stored fetch list. |
 
-1. **Overview** — Server-wide KPIs over time, tribe distribution, charts.
-2. **Leaderboards** — Top alliances / players / villages style rankings.
-3. **Players** — Search and drill-down; player map uses **green** (current villages), **red** (lost to another player while still observable), **yellow** (destroyed / disappeared at last known coords), grey backdrop for the rest.
-4. **Alliances** — Search and drill-down; alliance maps use **green** (current members), **blue** (chiefed away but village still on map), **yellow** (same owner but no longer in this alliance tag), **red** (gone in latest snapshot), with expanders for conquered holdings and losses by opposing alliance where applicable.
-5. **Villages** — Table and single-village history.
-6. **Map** — Full-world **Plotly** scatter; highlight by player, alliance, or tribe.
-7. **Custom** — Maps driven by **`config/custom_maps.yaml`**.
-8. **Inactives** — Same idea as CLI **`inactives`**, with UI controls.
-9. **Natars (NPC)** — Focus on NPC / Natars-style tribe data (tribe 5 in typical worlds).
-10. **Nature** — Separate **Nature** / tribe-4 style tiles when present in **`map.sql`** (some worlds have little or no Nature data).
-11. **Events** — Snapshot-to-snapshot diff (new, removed, chiefed, growth, alliance moves).
-12. **Snapshots** — List of stored runs.
+### Inactives tab (dashboard)
 
-### Themes and charts
+1. Set **center x/y**, **minimum / maximum radius** (tile ring).
+2. Choose **Population rule**:
+   - **Latest vs previous** (recommended with daily auto-fetch).
+   - **Entire history** (strict; needs more snapshots).
+3. Optional **min/max player population** (total across all villages; **`0`** = no bound).
+4. Click **Search** — map shows **all** matches (up to **Max results**); table is paged (default 25 rows; dropdown when &gt; 10 matches).
+5. Use **Fetch now** in the sidebar after new snapshots land, then **Search** again.
 
-Palettes and **`app_theme`** / **`appearance`** live in **`config/ui.yaml`**. After editing, reload the dashboard (Streamlit rerun). The **`menu`** command’s UI path should match **`config/ui.yaml`** if you want terminal and browser aligned.
+### Themes
 
-### “WebSocketClosedError” / Tornado traceback in the console
+Edit **`config/ui.yaml`**; reload the dashboard. **`python main.py menu`** can adjust some palette settings to the same file.
 
-Clients disconnecting from Streamlit’s dev server often produce benign WebSocket/stack traces in the terminal. That is runtime noise, not corrupt data — unless UI actions fail reproducibly after a reload.
+### Console noise
 
-## Scheduling (choose one pattern)
-
-| Pattern | When to use |
-|---------|--------------|
-| **Task Scheduler → `python main.py fetch`** once per day | Simplest external trigger; process exits after fetch. |
-| **`python main.py run`** (or **`scripts/run_daily_fetch.bat`**) | Long-lived process with built-in **`schedule`** library. |
-| **Dashboard embedded scheduler** | Default **`on`**; set **`T_STATS_EMBED_SCHEDULER=0`** if you fetch only via **`main.py`**. |
-
-**Do not** double-schedule the same DB with **`run`** and embedded dashboard fetch without intending duplicate downloads.
-
-Windows examples are in **`README.md`**.
+Streamlit disconnect WebSocket traces in the terminal are usually harmless unless the UI breaks after reload.
 
 ## Export / handoff checklist
 
-When packaging or sending the repo to someone else:
+1. Include source, **`LICENSE`**, **`README.md`**, **`docs/USAGE.md`**, **`config/servers.json.example`**, **`config/ui.yaml`**, **`Start Dashboard.bat`**, **`Start Collector.bat`**, **`scripts/`**.
+2. **Do not** ship **`config/servers.json`**, **`statistics.db`**, **`data/snapshots/`**, **`.venv/`** unless intentional.
+3. Recipient runs **`scripts\install_requirements.bat`**, edits **`config/servers.json`**, double-clicks **`Start Dashboard.bat`** or runs **`python main.py fetch`** once.
+4. Optional archive: **`scripts\export_release.bat`** → **`release-v1.1.2.zip`**.
 
-1. Include **source**, **`LICENSE`**, **`config/servers.json.example`**, **`config/ui.yaml`** / **`config/custom_maps.yaml`** if customised (**not** **`config/servers.json`** — that file is gitignored and must stay personal).
-2. Include **`requirements.txt`**, **`pyproject.toml`**, and **`README.md`** plus this **`docs/USAGE.md`**.
-3. **Exclude** from zips/shares unless needed: **`statistics.db`**, **`data/snapshots/`**, **`.venv/`** (recipient rebuilds venv).
-4. Document **`T_STATS_DB`** / **`T_STATS_CONFIG`** if their paths differ from defaults.
-5. Run **`pip install -r requirements.txt`** and **`python main.py fetch`** once to validate.
-6. For a clean release archive, run **`scripts/export_release.bat`** to package the repository without personal data.
-
-Quick sanity check for syntax (optional):
+Sanity check:
 
 ```powershell
 python -m compileall -q src
 python -m py_compile main.py dashboard.py
 ```
+
+## Project layout (runtime)
+
+```text
+Start Dashboard.bat       # double-click: UI + daily fetch
+Start Collector.bat       # double-click: fetch loop only
+config/servers.json       # your worlds (gitignored)
+statistics.db             # SQLite (gitignored)
+data/snapshots/           # raw map.sql (gitignored)
+main.py                   # CLI
+dashboard.py              # Streamlit app
+src/                      # library code
+scripts/                  # install, export, launcher helpers
+```
+
+See **`data/README.md`** for what appears under **`data/`** at runtime.

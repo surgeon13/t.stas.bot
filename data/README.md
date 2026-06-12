@@ -1,1 +1,12 @@
-Runtime data for this installation. The app creates **`snapshots/<server_key>/`** here when **`keep_raw_snapshots`** is enabled in `config/servers.json`; those files are gitignored. The SQLite database **`statistics.db`** lives in the project root (also gitignored).
+# Runtime data directory
+
+The app writes optional files here at runtime (all gitignored except this README).
+
+| Path | When created |
+|------|----------------|
+| **`snapshots/<server_key>/`** | Raw `map.sql` bodies when **`keep_raw_snapshots`** is `true` in **`config/servers.json`**. |
+| **`statistics.db`** | Lives in the **project root** (not under `data/`), created on first fetch. |
+
+Windows launchers (**`Start Dashboard.bat`**, **`Start Collector.bat`**) use the project root as the working directory, so paths above resolve correctly.
+
+See **[docs/USAGE.md](../docs/USAGE.md)** for scheduling, inactive search, and dashboard usage.

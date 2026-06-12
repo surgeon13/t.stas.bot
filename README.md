@@ -48,20 +48,23 @@ history (e.g. "did this player exist last week?", "how did this alliance grow?")
 ## Project layout
 
 ```text
+Start Dashboard.bat       # double-click: browser UI + daily auto-fetch (Windows)
+Start Collector.bat       # double-click: fetch loop only (no browser)
 config/servers.json       # create locally — copy servers.json.example (not in git)
 config/servers.json.example
+scripts/                  # install_requirements.bat, export_release.bat, launcher helpers
 LICENSE
 .gitignore
 config/ui.yaml            # dashboard + menu: themes, map palette, chart options
 config/custom_maps.yaml   # optional regions for the Custom map tab
 .streamlit/config.toml    # Streamlit chrome (toolbar, theme, usage stats off)
-docs/USAGE.md         # full usage reference (CLI, env vars, export checklist)
-data/README.md        # what lands under data/ at runtime
-data/snapshots/       # raw map.sql files (gitignored)
-src/                  # modules: config / downloader / parser / storage / analyzer / scheduler / view
-main.py               # CLI entry point (terminal UI with rich tables)
-dashboard.py          # Streamlit web dashboard (browser UI, reads same DB)
-statistics.db         # SQLite database (gitignored, created on first run)
+docs/USAGE.md             # full handbook (CLI, launchers, dashboard, scheduling)
+data/README.md            # what lands under data/ at runtime
+data/snapshots/           # raw map.sql files (gitignored)
+src/                      # config / downloader / parser / storage / analyzer / scheduler / view
+main.py                   # CLI entry point (terminal UI with rich tables)
+dashboard.py              # Streamlit web dashboard (browser UI, reads same DB)
+statistics.db             # SQLite database (gitignored, created on first run)
 ```
 
 ## Setup
@@ -89,45 +92,35 @@ scripts\install_requirements.bat
 
 ## Quick start
 
-**Windows — double-click (after `scripts\install_requirements.bat` once):**
+### Windows — double-click (recommended)
+
+1. Run once: **`scripts\install_requirements.bat`** (creates `.venv`, installs deps).
+2. Edit **`config\servers.json`** if needed (launchers copy from **`servers.json.example`** when missing). The example targets **International 50 (x5)** at `ts50.x5.international.travian.com`.
+3. Double-click:
 
 | File | What it does |
 |------|----------------|
-| **`Start Dashboard.bat`** | Browser UI + daily auto-fetch (recommended) |
-| **`Start Collector.bat`** | Fetch loop only, no browser |
+| **`Start Dashboard.bat`** | Opens http://localhost:8501 + **daily auto-fetch** in the background |
+| **`Start Collector.bat`** | Fetch loop only (no browser) |
 
-1. Ensure `config/servers.json` exists by copying the example and editing the server entries (launchers create it from the example if missing):
+Leave the console window open while the app runs. Schedule: **`config/servers.json`** → **`settings.schedule`** (default `daily@00:01` local time).
+
+### Command line (same machine)
 
 ```powershell
 copy config\servers.json.example config\servers.json
+python main.py fetch                              # one download
+python -m streamlit run dashboard.py              # UI (embedded fetch ON by default)
+python main.py                                    # unattended fetch loop (no UI)
 ```
 
-2. Run a one-time fetch to download the latest map snapshot:
+Schedule strings: `daily@00:01`, `every@6h`, `every@30m`.
 
-```powershell
-python main.py fetch
-```
-
-3. Open the dashboard in your browser:
-
-```powershell
-streamlit run dashboard.py
-```
-
-4. Run the scheduler loop so fetches repeat automatically (no keyboard input; reads `settings.schedule`):
-
-```powershell
-python main.py run --no-schedule-stdin
-# or simply (same unattended default):
-python main.py
-```
-
-Schedule in `config/servers.json`: `daily@00:01` (default), `every@6h`, or `every@30m`. On Windows, **`scripts\run_daily_fetch.bat`** starts the same loop.
-
-If you want to install the app as a local package after export:
+Optional package install:
 
 ```powershell
 python -m pip install -e .
+t-statistics fetch
 ```
 
 The CLI uses [`rich`](https://github.com/Textualize/rich) to render output as
@@ -146,31 +139,28 @@ python main.py list-servers                       # show configured servers
 python main.py add-server --key k --name "N" --base-url https://...  # append to config/servers.json
 python main.py menu                               # interactive terminal hub (fetch, UI paths, quit)
 python main.py fetch                              # fetch all enabled servers once
-python main.py fetch --server europe31x3
+python main.py fetch --server international50x5
 python main.py snapshots                          # list stored snapshots
 python main.py run                                # daily scheduled loop (foreground)
 ```
 
+Replace **`international50x5`** with your server **`key`** from **`config/servers.json`**.
+
 ### Snapshot summary
 
 ```powershell
-python main.py analyze --server europe31x3       # summary + tribe + top 10
-python main.py analyze --server europe31x3 --top 25
+python main.py analyze --server international50x5
+python main.py analyze --server international50x5 --top 25
 ```
 
 ### Player population
 
 ```powershell
-# Ranking with delta vs previous snapshot (only when 2+ snapshots stored)
-python main.py players --server europe31x3 --top 25
-python main.py players --server europe31x3 --sort villages
-
-# Full history for a single player (with sparkline) + per-village ledger
-python main.py player --server europe31x3 --name "Angry Mokki"
-python main.py player --server europe31x3 --id 3865
-
-# Skip the ledger (just show the population history)
-python main.py player --server europe31x3 --id 3865 --no-villages
+python main.py players --server international50x5 --top 25
+python main.py players --server international50x5 --sort villages
+python main.py player --server international50x5 --name "Player name"
+python main.py player --server international50x5 --id 3865
+python main.py player --server international50x5 --id 3865 --no-villages
 ```
 
 The `player` command now prints three sections:
@@ -192,41 +182,35 @@ The `player` command now prints three sections:
 ### Alliance population
 
 ```powershell
-python main.py alliances --server europe31x3 --top 25
-python main.py alliances --server europe31x3 --sort members
-
-python main.py alliance --server europe31x3 --name "IMX"   # shows disambiguation if ambiguous
-python main.py alliance --server europe31x3 --id 42
+python main.py alliances --server international50x5 --top 25
+python main.py alliance --server international50x5 --name "Alliance tag"
 ```
 
 ### Village population
 
 ```powershell
-# Top villages by current population (with per-village delta vs previous snapshot)
-python main.py villages --server europe31x3 --top 25
-
-# Top gainers / losers in the latest snapshot only
-python main.py villages --server europe31x3 --sort growth --top 25
-python main.py villages --server europe31x3 --sort loss --top 25
-
-# All villages owned by one player (with per-village delta)
-python main.py villages --server europe31x3 --player "Angry Mokki"
-python main.py villages --server europe31x3 --player 3865
-
-# Full history of one village (population + owner timeline + sparkline)
-python main.py village --server europe31x3 --name "Capital"   # disambiguates
-python main.py village --server europe31x3 --id 77304
+python main.py villages --server international50x5 --top 25
+python main.py villages --server international50x5 --sort growth --top 25
+python main.py villages --server international50x5 --player "Player name"
+python main.py village --server international50x5 --id 77304
 ```
 
 ### Inactive villages (flat population near coordinates)
 
-Uses the latest snapshot plus enough history so “flat” population is meaningful.
-Thresholds come from **`settings`** in **`config/servers.json`** unless you override flags.
+Proxy for inactive farms: population that did **not change** between snapshots (not login data).
+
+- **`--flat-mode latest_pair`** (default) — unchanged between the **two newest** snapshots (good with daily fetch).
+- **`--flat-mode all_history`** — unchanged across **all** stored snapshots (strict).
+- **`--radius`** = maximum tiles from center; **`--radius-min`** = inner edge of ring (0 = include center).
+- **`--player-pop-min` / `--player-pop-max`** — filter by owner’s **total** population (`0` = no bound).
 
 ```powershell
-python main.py inactives --server europe31x3 --x 10 --y -20
-python main.py inactives --server europe31x3 --x 10 --y -20 --radius 20 --include-npc
+python main.py inactives --server international50x5 --x 10 --y -20
+python main.py inactives --server international50x5 --x 10 --y -20 --radius-min 0 --radius 30 --flat-mode latest_pair
+python main.py inactives --server international50x5 --x 10 --y -20 --player-pop-max 500 --include-npc
 ```
+
+The dashboard **Inactives** tab offers the same controls with map, CSV export, and paging.
 
 ### Cross-snapshot events
 
@@ -234,33 +218,22 @@ Compares the two latest snapshots by default. Pass `--from-id` / `--to-id` to
 compare any two specific snapshots. Use `--kind` to filter to one event type.
 
 ```powershell
-python main.py events --server europe31x3                   # all event kinds
-python main.py events --server europe31x3 --kind new        # newly founded villages
-python main.py events --server europe31x3 --kind chiefed    # chiefed villages (owner changed)
-python main.py events --server europe31x3 --kind ally-move  # players who switched alliance
-python main.py events --server europe31x3 --kind removed    # villages destroyed/disappeared
-python main.py events --server europe31x3 --kind grew       # top village pop gainers (same owner)
-python main.py events --server europe31x3 --kind shrunk     # top village pop losers (same owner)
-python main.py events --server europe31x3 --from-id 1 --to-id 5
+python main.py events --server international50x5 --kind chiefed
+python main.py events --server international50x5 --from-id 1 --to-id 5
 ```
 
 ### Scheduling vs one-shot
 
-`python main.py run` blocks the foreground and uses `schedule` to run the job
-daily at `settings.schedule` (default `daily@00:01`, **machine local time**).
-You can double-click **`scripts/run_daily_fetch.bat`** on Windows to start that loop.
+| Method | Notes |
+|--------|--------|
+| **`Start Dashboard.bat`** | UI + embedded daily fetch (**recommended** on Windows). |
+| **`Start Collector.bat`** / **`python main.py`** | Fetch loop only; reads **`settings.schedule`**. |
+| **`python main.py fetch`** | Single download; exits. |
+| Task Scheduler → **`fetch`** | External daily trigger. |
 
-**Dashboard + automatic fetch:** enabled **by default** when you launch Streamlit — the dashboard
-runs the same daily loop as **`python main.py run`** in a background thread. Use
-**`T_STATS_EMBED_SCHEDULER=0`** (or `false`) before **`streamlit run dashboard.py`** for
-dashboard-only (no builtin fetches — e.g. you run **`python main.py run`** or Task Scheduler
-elsewhere instead). Avoid running **`python main.py run`** and the dashboard’s embedded fetch on the **same DB** schedule, or you will collect duplicate **`map.sql`** snapshots.
+Embedded fetch in Streamlit is **ON by default**. Set **`T_STATS_EMBED_SCHEDULER=0`** before launch for dashboard-only. **Do not** run **`Start Collector.bat`** and **`Start Dashboard.bat`** against the same DB — duplicate downloads.
 
-The helper **`scripts/run_dashboard_with_scheduler.bat`** sets `T_STATS_EMBED_SCHEDULER=1`
-explicitly; it is optional now that fetching defaults on.
-
-For a true background service, register **`python main.py run`** (or the `.bat`)
-in Task Scheduler — see the bottom of this README for a sample entry.
+Sidebar: **Fetch now** for manual updates; caches refresh after each fetch.
 
 ## Servers and scheduling
 
@@ -293,15 +266,14 @@ Identical fetches (same sha256 per server) are deduplicated.
 
 ## Web dashboard
 
-For a browser-based UI instead of the terminal:
+For a browser-based UI:
 
 ```powershell
-python -m streamlit run dashboard.py
+Start Dashboard.bat
+# or: python -m streamlit run dashboard.py
 ```
 
-Streamlit prints a `Local URL` (default `http://localhost:8501`) — open it
-in any browser. The dashboard reads the same `statistics.db`, so it stays in
-sync with whatever `main.py fetch` collects.
+Default URL: **http://localhost:8501**. The dashboard reads **`statistics.db`** and runs **daily auto-fetch** unless **`T_STATS_EMBED_SCHEDULER=0`**. Use sidebar **Fetch now** for an immediate update.
 
 It has **twelve** tabs (same SQLite as the CLI):
 
@@ -312,7 +284,7 @@ It has **twelve** tabs (same SQLite as the CLI):
 - **Villages** — Table and single-village history.
 - **Map** — Full-world **Plotly** scatter; highlight by **Player**, **Alliance**, or **Tribe** (highlighted set in color on a faded grey field). Centroid, bounding box, and per-village lists in the UI.
 - **Custom** — Named regions / views from **`config/custom_maps.yaml`**.
-- **Inactives** — Same idea as **`python main.py inactives`**, with controls in the browser.
+- **Inactives** — Ring search (min/max radius), **latest vs previous** or **entire history** flat-pop rules, player pop filters, map + CSV + paged table. **Coords** link to Travian map (new tab).
 - **Natars (NPC)** — Natars / NPC-focused village search (typical **tribe 5** worlds).
 - **Nature** — Nature tiles when present in **`map.sql`** (some worlds have little or no tribe-4 data).
 - **Events** — Diff between any two stored snapshots: new / removed / chiefed / growth / shrink / alliance moves.
@@ -336,13 +308,15 @@ Start in:  C:\Users\path\to\t.statistics.stas.bot
 Trigger:   Daily at 00:01
 ```
 
-**Or** start the in-app scheduler at login (runs forever, respects `settings.schedule`):
+**Or** double-click **`Start Dashboard.bat`** or **`Start Collector.bat`** at logon:
 
 ```text
-Program:   C:\path\to\scripts\run_daily_fetch.bat
-Start in:  C:\Users\path\to\t.statistics.stas.bot
-Trigger:   At log on (or Daily if you restart the PC daily)
+Program:   C:\path\to\t.statistics.stas.bot\Start Dashboard.bat
+Start in:  C:\path\to\t.statistics.stas.bot
+Trigger:   At log on
 ```
+
+Equivalent: **`scripts\run_daily_fetch.bat`** (collector) or **`scripts\run_dashboard_with_scheduler.bat`** (dashboard).
 
 ## GitHub
 
